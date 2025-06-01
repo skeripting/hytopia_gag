@@ -1,0 +1,21 @@
+{
+  "name": "hytopia-demo",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@hytopia.com/assets": "^0.3.2",
+    "hytopia": "^0.6.6",
+    "hytopia-demo": "file:"
+  },
+  "trustedDependencies": [
+    "mediasoup",
+    "sharp"
+  ]
+}
