@@ -23,10 +23,17 @@
  * Official SDK NPM Package: https://www.npmjs.com/package/hytopia
  */
 
-import { startServer, Audio, DefaultPlayerEntity, PlayerEvent } from "hytopia";
+import {
+  startServer,
+  Audio,
+  DefaultPlayerEntity,
+  PlayerEvent,
+  Entity,
+  EntityEvent,
+  BaseEntityControllerEvent,
+} from "hytopia";
 
 import worldMap from "./assets/map.json";
-
 /**
  * startServer is always the entry point for our game.
  * It accepts a single function where we should do any
@@ -77,7 +84,7 @@ startServer((world) => {
       name: "Player",
     });
 
-    playerEntity.spawn(world, { x: 0, y: 10, z: 0 });
+    playerEntity.spawn(world, { x: -65, y: 10, z: 10 });
 
     // Load our game UI for this player
     player.ui.load("ui/index.html");
@@ -85,7 +92,7 @@ startServer((world) => {
     // Send a nice welcome message that only the player who joined will see ;)
     world.chatManager.sendPlayerMessage(
       player,
-      "Welcome to the game!",
+      "Welcome to Grow a Garden!",
       "00FF00"
     );
     world.chatManager.sendPlayerMessage(player, "Use WASD to move around.");
@@ -93,7 +100,59 @@ startServer((world) => {
     world.chatManager.sendPlayerMessage(player, "Hold shift to sprint.");
     world.chatManager.sendPlayerMessage(
       player,
+      "Talk to the NPC to get started!"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
       "Press \\ to enter or exit debug view."
+    );
+
+    // Trying to spawn a skeleton entity
+    const skeletonSeedSeller = new Entity({
+      modelUri: "models/npcs/skeleton.gltf",
+      modelLoopedAnimations: ["idle"],
+      modelScale: 0.8,
+      rigidBodyOptions: {
+        enabledRotations: { x: false, y: true, z: false }, // Only allow rotations around Y axis (Yaw)
+      },
+    });
+
+    // We need to make the entity rotate 90 degrees around the Y axis
+    skeletonSeedSeller.setRotation({ x: 0, y: -Math.PI / 2, z: 0, w: 1 });
+    // Just like the player entity, we can spawn the skeleton entity
+    skeletonSeedSeller.spawn(world, { x: -74, y: 10, z: 10 });
+
+    skeletonSeedSeller.controller?.on(
+      BaseEntityControllerEvent.TICK_WITH_PLAYER_INPUT,
+      ({ entity, input, cameraOrientation, deltaTimeMs }) => {
+        if (input.ml || input.mr) {
+          const origin = entity.position;
+          const direction = entity.player.camera.facingDirection;
+          const length = 5;
+          const raycastResult = world.simulation.raycast(
+            origin,
+            direction,
+            length,
+            {
+              filterExcludeRigidBody: playerEntity.rawRigidBody,
+            }
+          );
+
+          console.log("Raycast result:", raycastResult);
+
+          if (raycastResult?.hitEntity) {
+            // handle entity click
+            world.chatManager.sendPlayerMessage(
+              player,
+              `You clicked on ${raycastResult.hitEntity.name}!`
+            );
+          }
+
+          // Cancel input to prevent multiple detections per tick
+          input.ml = false;
+          input.mr = false;
+        }
+      }
     );
   });
 
