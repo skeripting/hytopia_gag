@@ -5,31 +5,100 @@ and also configure additional buttons for mobile compatibility.
 
 <script>
   // Handle interact button touch / untouch
-  const mobileInteractButton = document.getElementById('mobile-interact-button');
-  mobileInteractButton.addEventListener('touchstart', e => {
+  const mobileInteractButton = document.getElementById(
+    "mobile-interact-button"
+  );
+  mobileInteractButton.addEventListener("touchstart", (e) => {
     e.preventDefault(); // Prevents mobile highlight/select/copy popup behaviors
-    mobileInteractButton.classList.add('active'); // more immediate feedback to add/remove active class
-    hytopia.pressInput('ml', true);
+    mobileInteractButton.classList.add("active"); // more immediate feedback to add/remove active class
+    hytopia.pressInput("ml", true);
   });
 
-  mobileInteractButton.addEventListener('touchend', e => {
+  mobileInteractButton.addEventListener("touchend", (e) => {
     e.preventDefault();
-    mobileInteractButton.classList.remove('active');
-    hytopia.pressInput('ml', false);
+    mobileInteractButton.classList.remove("active");
+    hytopia.pressInput("ml", false);
   });
 
   // Handle jump button touch / untouch
-  const mobileJumpButton = document.getElementById('mobile-jump-button');
-  mobileJumpButton.addEventListener('touchstart', e => {
+  const mobileJumpButton = document.getElementById("mobile-jump-button");
+  mobileJumpButton.addEventListener("touchstart", (e) => {
     e.preventDefault();
-    mobileJumpButton.classList.add('active');
-    hytopia.pressInput(' ', true);
+    mobileJumpButton.classList.add("active");
+    hytopia.pressInput(" ", true);
   });
 
-  mobileJumpButton.addEventListener('touchend', e => {
+  mobileJumpButton.addEventListener("touchend", (e) => {
     e.preventDefault();
-    mobileJumpButton.classList.remove('active');
-    hytopia.pressInput(' ', false);
+    mobileJumpButton.classList.remove("active");
+    hytopia.pressInput(" ", false);
+  });
+
+  console.log(hytopia);
+  // Handle inventory updates from chat messages
+  hytopia.onData((data) => {
+    if (data.type === "inventory_update" && data.inventory) {
+      updateInventoryUI(data.inventory, data.heldItemIndex);
+    }
+  });
+
+  /*hytopia.onChatMessage((message) => {
+    try {
+      const data = JSON.parse(message);
+      if (data.type === "inventory_update" && data.inventory) {
+        console.log("UI: Received inventory update:", data.inventory);
+        updateInventoryUI(data.inventory);
+      }
+    } catch (e) {
+      // Not a JSON message, ignore
+    }
+  });*/
+
+  function updateInventoryUI(inventory, heldItemIndex) {
+    document.querySelectorAll(".inventory-slot").forEach((slot, index) => {
+      const item = inventory[index];
+      const isHeld = index === heldItemIndex;
+
+      // Reset all slots first
+      slot.classList.remove("selected", "empty", "has-item");
+
+      if (item) {
+        // If there's an item, show its name
+        slot.textContent = item;
+        slot.classList.add("has-item");
+
+        if (isHeld) {
+          // If this is the held item, add selected class
+          slot.classList.add("selected");
+        }
+      } else {
+        // If no item, show the slot number
+        slot.textContent = (index + 1).toString();
+        slot.classList.add("empty");
+      }
+    });
+  }
+
+  // Handle number keys 1-9 to select inventory slots
+  document.addEventListener("keydown", (e) => {
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 9) {
+      const index = num - 1;
+      const slot = document.querySelector(
+        `.inventory-slot[data-index="${index}"]`
+      );
+      if (slot) {
+        hytopia.sendData({ type: "hold", index: index });
+      }
+    }
+  });
+
+  // Handle slot clicks
+  document.querySelectorAll(".inventory-slot").forEach((slot) => {
+    slot.addEventListener("click", () => {
+      const index = parseInt(slot.dataset.index);
+      hytopia.sendData({ type: "hold", index: index });
+    });
   });
 </script>
 
@@ -52,6 +121,21 @@ and also configure additional buttons for mobile compatibility.
   </a>
 </div>
 
+<div class="inventory-container">
+  <div class="inventory-grid" id="inventory-grid">
+    <!-- Create 9 inventory slots -->
+    <div class="inventory-slot" data-index="0">1</div>
+    <div class="inventory-slot" data-index="1">2</div>
+    <div class="inventory-slot" data-index="2">3</div>
+    <div class="inventory-slot" data-index="3">4</div>
+    <div class="inventory-slot" data-index="4">5</div>
+    <div class="inventory-slot" data-index="5">6</div>
+    <div class="inventory-slot" data-index="6">7</div>
+    <div class="inventory-slot" data-index="7">8</div>
+    <div class="inventory-slot" data-index="8">9</div>
+  </div>
+</div>
+
 <style>
   /* By default, we hide the mobile controls */
   .mobile-controls {
@@ -62,7 +146,8 @@ and also configure additional buttons for mobile compatibility.
     We can use the body.mobile class to detect if we're on a mobile device.
     The HYTOPIA game client will always add this class to the body element when running on a mobile device.
   */
-  body.mobile .mobile-controls { /* If this css selector matches because we're on mobile, show the mobile controls */
+  body.mobile .mobile-controls {
+    /* If this css selector matches because we're on mobile, show the mobile controls */
     display: flex;
     gap: 14px;
     position: fixed;
@@ -82,13 +167,13 @@ and also configure additional buttons for mobile compatibility.
     transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
     will-change: transform, background-color;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    font-family: 'Inter', sans-serif;
+    font-family: "Inter", sans-serif;
     font-size: 14px;
     font-weight: bold;
     color: rgba(255, 255, 255, 0.8);
     text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
   }
-  
+
   .mobile-button img {
     width: 22px;
     height: 22px;
@@ -98,5 +183,54 @@ and also configure additional buttons for mobile compatibility.
     transform: scale(0.92);
     background-color: rgba(0, 0, 0, 0.75);
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-  }  
+  }
+
+  .inventory-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.7);
+    border-radius: 8px;
+    padding: 10px;
+  }
+
+  .inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(9, 40px);
+    gap: 4px;
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 4px;
+    border-radius: 4px;
+  }
+
+  .inventory-slot {
+    width: 40px;
+    height: 40px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: rgba(255, 255, 255, 0.5);
+    font-family: "Inter", sans-serif;
+    font-size: 12px; /* Slightly smaller font to fit item names */
+    font-weight: bold;
+    text-align: center;
+    padding: 2px;
+    word-break: break-word;
+  }
+
+  .inventory-slot:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .inventory-slot.selected {
+    border-color: #4caf50;
+    background-color: rgba(76, 175, 80, 0.2);
+  }
 </style>

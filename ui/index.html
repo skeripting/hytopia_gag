@@ -1,0 +1,88 @@
+// Handle inventory updates from chat messages hytopia.onData((data) => { if
+(data.type === "inventory_update" && data.inventory) {
+updateInventoryUI(data.inventory, data.heldItemIndex); } }); function
+updateInventoryUI(inventory, heldItemIndex) {
+document.querySelectorAll(".inventory-slot").forEach((slot, index) => { const
+item = inventory[index]; const isHeld = index === heldItemIndex; // Reset all
+slots first slot.classList.remove("selected", "empty", "has-item"); if (item) {
+// If there's an item, show its name slot.textContent = item;
+slot.classList.add("has-item"); if (isHeld) { // If this is the held item, add
+selected class slot.classList.add("selected"); } } else { // If no item, show
+the slot number slot.textContent = (index + 1).toString();
+slot.classList.add("empty"); } }); }
+
+<style>
+  /* ... existing styles ... */
+
+  .inventory-slot {
+    width: 40px;
+    height: 40px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    color: rgba(255, 255, 255, 0.5);
+    font-family: "Inter", sans-serif;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: center;
+    padding: 2px;
+    word-break: break-word;
+    position: relative;
+  }
+
+  .inventory-slot.empty {
+    color: rgba(255, 255, 255, 0.3);
+    background-color: rgba(0, 0, 0, 0.2);
+  }
+
+  .inventory-slot.has-item {
+    color: rgba(255, 255, 255, 0.9);
+    background-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .inventory-slot.selected {
+    border-color: #4caf50;
+    background-color: rgba(76, 175, 80, 0.3);
+    box-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
+    transform: scale(1.05);
+  }
+
+  .inventory-slot.selected::after {
+    content: "";
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    border: 2px solid #4caf50;
+    border-radius: 6px;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4);
+    }
+    70% {
+      box-shadow: 0 0 0 6px rgba(76, 175, 80, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+    }
+  }
+
+  .inventory-slot:hover:not(.empty) {
+    background-color: rgba(255, 255, 255, 0.25);
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: scale(1.05);
+  }
+
+  .inventory-slot.empty:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+</style>
