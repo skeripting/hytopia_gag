@@ -53,19 +53,84 @@ const playerRaycastData = new Map<
   }
 >();
 
-// Add at the top with other state variables
-const growingSeeds = new Map<
-  string,
-  {
-    entity: Entity;
-    startTime: number;
-    startScale: number;
-    endScale: number;
-    startY: number;
-    endY: number;
-    plantPos: { x: number; y: number; z: number };
-  }
->();
+// Update the GrowingSeed type to be more specific
+type GrowingSeed = {
+  entity: Entity;
+  startTime: number;
+  startScale: number;
+  endScale: number;
+  startY: number;
+  endY: number;
+  plantPos: { x: number; y: number; z: number };
+  plantName: string;
+};
+
+// Update the growingSeeds map with the new type
+const growingSeeds = new Map<string, GrowingSeed>();
+
+// Add type definition for plant types
+type PlantType = {
+  name: string;
+  seedModel: string;
+  plantModel: string;
+  seedScale: number;
+  plantScale: number;
+  growthTime: number;
+  finalHeight: number;
+  color: string;
+  emoji: string;
+};
+
+type PlantTypes = {
+  [key: string]: PlantType;
+};
+
+const PLANT_TYPES: PlantTypes = {
+  "carrot-seed": {
+    name: "Carrot Seed",
+    seedModel: "models/items/stick.gltf",
+    plantModel: "models/items/bone.gltf",
+    seedScale: 0.3,
+    plantScale: 1.2,
+    growthTime: 4000, // 4 seconds
+    finalHeight: 0.5,
+    color: "FFA500", // Orange
+    emoji: "🥕",
+  },
+  "melon-seed": {
+    name: "Melon Seed",
+    seedModel: "models/items/stick.gltf",
+    plantModel: "models/items/melon.gltf",
+    seedScale: 0.3,
+    plantScale: 1.5,
+    growthTime: 30000, // 30 seconds
+    finalHeight: 0.3,
+    color: "00FF00", // Green
+    emoji: "🍈",
+  },
+  "potato-seed": {
+    name: "Potato Seed",
+    seedModel: "models/items/stick.gltf",
+    plantModel: "models/items/potato.gltf", // Using bone as placeholder
+    seedScale: 0.3,
+    plantScale: 0.8,
+    growthTime: 60000, // 60 seconds
+    finalHeight: 0.6,
+    color: "8B4513", // Brown
+    emoji: "🥔",
+  },
+  "cookie-seed": {
+    name: "Cookie Seed",
+    seedModel: "models/items/stick.gltf",
+    plantModel: "models/items/cookie.gltf", // Using map as placeholder
+    seedScale: 0.3,
+    plantScale: 2.0,
+    growthTime: 75000, // 75 seconds
+    finalHeight: 1.5,
+    color: "8B4513", // Gold
+    emoji: "🍪",
+  },
+} as const;
 
 // Create seed item entity
 const createSeedItem = () => {
@@ -289,17 +354,26 @@ startServer((world) => {
         console.log("Server: Planting seed from input");
 
         // Get the closest dirt position from our stored raycast data
-        if (raycastData?.closestDirtPos) {
+        if (raycastData?.closestDirtPos && heldItem) {
           const plantPos = {
             x: raycastData.closestDirtPos.x + 0.5,
             y: raycastData.closestDirtPos.y + 1,
             z: raycastData.closestDirtPos.z + 0.5,
           };
 
+          const plantInfo = Object.values(PLANT_TYPES).find(
+            (info): info is PlantType => info.name === heldItem
+          );
+
+          if (!plantInfo) {
+            console.error("Unknown plant type:", heldItem);
+            return;
+          }
+
           // Create a new entity for the planted seed
           const plantedSeed = new Entity({
-            modelUri: "models/items/stick.gltf",
-            modelScale: 0.3,
+            modelUri: plantInfo.seedModel,
+            modelScale: plantInfo.seedScale,
             rigidBodyOptions: {
               enabled: true,
               type: RigidBodyType.FIXED,
@@ -309,16 +383,17 @@ startServer((world) => {
           // Spawn the planted seed
           plantedSeed.spawn(world, plantPos);
 
-          // Add to growing seeds map
+          // Add to growing seeds map with plant info
           const seedId = `${plantPos.x},${plantPos.y},${plantPos.z}`;
           growingSeeds.set(seedId, {
             entity: plantedSeed,
             startTime: Date.now(),
-            startScale: 0.3,
-            endScale: 0.6,
+            startScale: plantInfo.seedScale,
+            endScale: plantInfo.plantScale,
             startY: plantPos.y,
-            endY: plantPos.y + 0.5, // Grow upward
+            endY: plantPos.y + plantInfo.finalHeight,
             plantPos: plantPos,
+            plantName: plantInfo.name,
           });
 
           // Get inventory and remove the seed
@@ -355,67 +430,82 @@ startServer((world) => {
           player.input.ml = false;
         }
       }
-    }, 50);
+    }, 1);
 
     // Add growth animation tick
     const growthInterval = setInterval(() => {
       const now = Date.now();
       growingSeeds.forEach((seed, id) => {
         const elapsed = now - seed.startTime;
-        const growthDuration = 4000; // 4 seconds
-        const t = Math.min(elapsed / growthDuration, 1);
+        const plantInfo = Object.values(PLANT_TYPES).find(
+          (info): info is PlantType => info.name === seed.plantName
+        );
+
+        if (!plantInfo) {
+          console.error("Unknown plant type:", seed.plantName);
+          growingSeeds.delete(id);
+          return;
+        }
+
+        const t = Math.min(elapsed / plantInfo.growthTime, 1);
 
         if (t >= 1) {
-          // Growth complete, replace with carrot
+          // Growth complete, replace with plant
           seed.entity.despawn();
           growingSeeds.delete(id);
 
-          // Create carrot entity with proper model and properties
-          const carrot = new Entity({
-            modelUri: "models/items/carrot.gltf", // Using carrot model
-            modelScale: 1.2, // Make it a bit bigger
-            modelLoopedAnimations: ["idle"], // Add idle animation if available
+          // Create plant entity with proper model and properties
+          const plant = new Entity({
+            modelUri: plantInfo.plantModel,
+            modelScale: plantInfo.plantScale,
+            modelLoopedAnimations: ["idle"],
             rigidBodyOptions: {
               enabled: true,
               type: RigidBodyType.FIXED,
             },
           });
 
-          // Spawn carrot at final position with slight random rotation
+          // Spawn plant at final position with slight random rotation
           const finalRotation = {
             x: 0,
-            y: Math.random() * Math.PI * 2, // Random rotation around Y
+            y: Math.random() * Math.PI * 2,
             z: 0,
             w: 1,
           };
 
-          carrot.spawn(world, {
+          plant.spawn(world, {
             ...seed.plantPos,
             y: seed.endY,
           });
-          carrot.setRotation(finalRotation);
+          plant.setRotation(finalRotation);
 
           // Add a small bounce animation when fully grown
           const originalY = seed.endY;
-          carrot.setPosition({ ...seed.plantPos, y: originalY + 0.2 });
+          plant.setPosition({ ...seed.plantPos, y: originalY + 0.2 });
           setTimeout(() => {
-            carrot.setPosition({ ...seed.plantPos, y: originalY });
+            plant.setPosition({ ...seed.plantPos, y: originalY });
           }, 200);
 
           // Notify nearby players with a more exciting message
           world.chatManager.sendPlayerMessage(
             player,
-            `✨ A fresh carrot has grown! 🥕`,
-            "FFA500"
+            `✨ A fresh ${plantInfo.name.replace(" Seed", "")} has grown! ${
+              plantInfo.emoji
+            }`,
+            plantInfo.color
           );
         } else {
           // Update scale and position using lerp
-          const currentScale = lerp(seed.startScale, seed.endScale, t);
+          const currentScale = lerp(
+            plantInfo.seedScale,
+            plantInfo.plantScale,
+            t
+          );
           const currentY = lerp(seed.startY, seed.endY, t);
 
           // Create new entity with updated scale
           const newEntity = new Entity({
-            modelUri: "models/items/stick.gltf",
+            modelUri: plantInfo.seedModel,
             modelScale: currentScale,
             rigidBodyOptions: {
               enabled: true,
@@ -423,18 +513,16 @@ startServer((world) => {
             },
           });
 
-          // Spawn at current position
+          // Replace old entity
+          seed.entity.despawn();
           newEntity.spawn(world, {
             ...seed.plantPos,
             y: currentY,
           });
-
-          // Replace old entity
-          seed.entity.despawn();
           seed.entity = newEntity;
         }
       });
-    }, 16); // ~60fps
+    }, 16);
 
     // Handle planting seeds
     player.ui.on(PlayerUIEvent.DATA, ({ playerUI, data }) => {
@@ -464,10 +552,19 @@ startServer((world) => {
             z: raycastData.closestDirtPos.z + 0.5, // Center on the block
           };
 
+          const plantInfo = Object.values(PLANT_TYPES).find(
+            (info): info is PlantType => info.name === heldItem
+          );
+
+          if (!plantInfo || !heldItem) {
+            console.error("Unknown plant type or no item held:", heldItem);
+            return;
+          }
+
           // Create a new entity for the planted seed
           const plantedSeed = new Entity({
-            modelUri: "models/items/stick.gltf",
-            modelScale: 0.3,
+            modelUri: plantInfo.seedModel,
+            modelScale: plantInfo.seedScale,
             rigidBodyOptions: {
               enabled: true,
               type: RigidBodyType.FIXED,
@@ -642,30 +739,49 @@ startServer((world) => {
     });
   });
 
-  // Update buy command to handle seeds
+  // Update buy command to handle all seed types
   world.chatManager.registerCommand("/buy", (player, args) => {
     if (!args[0]) {
+      const plantList = Object.entries(PLANT_TYPES)
+        .map(([type, info]) => {
+          const growthTimeInSeconds = info.growthTime / 1000;
+          return `${type.replace("-seed", "")} (${growthTimeInSeconds}s)`;
+        })
+        .join(", ");
+
       world.chatManager.sendPlayerMessage(
         player,
-        "Please specify what you want to buy (e.g. /buy carrot-seed)"
+        "Please specify what you want to buy. Available seeds: " + plantList
       );
       return;
     }
 
     const item = args[0].toLowerCase();
-    if (item === "carrot" || item === "carrot-seed") {
+    const seedType = item.endsWith("-seed") ? item : `${item}-seed`;
+
+    if (seedType in PLANT_TYPES) {
+      const plantInfo = PLANT_TYPES[seedType];
+      if (!plantInfo) return; // Type guard for TypeScript
+
       // Get player's inventory
       const inventory = playerInventories.get(player.id) || [];
 
-      // Add carrot seed to inventory
-      inventory.push("Carrot Seed"); // Capitalize the item name for display
+      // Add seed to inventory
+      inventory.push(plantInfo.name);
       playerInventories.set(player.id, inventory);
 
-      // Update the inventory UI with the new inventory data
+      // Update the inventory UI
       updatePlayerInventoryUI(player, world);
 
       // Spawn a visual seed entity that follows the player briefly
-      const seed = createSeedItem();
+      const seed = new Entity({
+        modelUri: plantInfo.seedModel,
+        modelScale: plantInfo.seedScale,
+        rigidBodyOptions: {
+          enabled: false,
+        },
+      });
+
       const playerEntity =
         world.entityManager.getPlayerEntitiesByPlayer(player)[0];
       if (playerEntity) {
@@ -678,9 +794,10 @@ startServer((world) => {
         }, 2000);
       }
 
+      const growthTimeInSeconds = plantInfo.growthTime / 1000;
       world.chatManager.sendPlayerMessage(
         player,
-        "You bought a carrot seed! 🌱",
+        `You bought a ${plantInfo.name}! 🌱 (Growth time: ${growthTimeInSeconds} seconds)`,
         "00FF00"
       );
       world.chatManager.sendPlayerMessage(
@@ -688,9 +805,17 @@ startServer((world) => {
         "Use /hold <slot> to hold an item (e.g. /hold 0)"
       );
     } else {
+      const plantList = Object.entries(PLANT_TYPES)
+        .map(([type, info]) => {
+          const growthTimeInSeconds = info.growthTime / 1000;
+          return `${type.replace("-seed", "")} (${growthTimeInSeconds}s)`;
+        })
+        .join(", ");
+
       world.chatManager.sendPlayerMessage(
         player,
-        "Sorry, that item is not available for purchase."
+        "Sorry, that seed is not available for purchase. Available seeds: " +
+          plantList
       );
     }
   });
