@@ -37,8 +37,27 @@ and also configure additional buttons for mobile compatibility.
   console.log(hytopia);
   // Handle inventory updates from chat messages
   hytopia.onData((data) => {
+    //console.log("UI: Received data:", data); // Debug log for all data
     if (data.type === "inventory_update" && data.inventory) {
       updateInventoryUI(data.inventory, data.heldItemIndex);
+    } else if (data.type === "raycast_update") {
+      const overlay = document.getElementById("plant-seed-overlay");
+      const text = document.getElementById("plant-seed-text");
+
+      if (!overlay || !text) {
+        console.error("UI: Missing overlay elements!");
+        return;
+      }
+
+      // Update canPlant flag based on conditions
+      let canPlant = data.lookingAtDirt && data.heldItem?.includes("Seed");
+
+      if (canPlant) {
+        text.textContent = `Plant ${data.heldItem}`;
+        overlay.classList.add("visible");
+      } else {
+        overlay.classList.remove("visible");
+      }
     }
   });
 
@@ -100,6 +119,76 @@ and also configure additional buttons for mobile compatibility.
       hytopia.sendData({ type: "hold", index: index });
     });
   });
+
+  console.log("UI: Plant seed overlay");
+  // Handle plant seed overlay clicks
+  const plantSeedOverlay = document.getElementById("plant-seed-overlay");
+
+  // Add debug logging for overlay state
+  console.log("UI: Initial overlay state:", {
+    exists: !!plantSeedOverlay,
+    classes: plantSeedOverlay?.classList.toString(),
+    style: plantSeedOverlay?.style.cssText,
+  });
+
+  // Try multiple event types to ensure we catch the click
+  ["click", "mousedown", "touchstart"].forEach((eventType) => {
+    plantSeedOverlay?.addEventListener(
+      eventType,
+      (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log(`UI: ${eventType} event on plant seed overlay`);
+
+        // Check if overlay is actually clickable
+        if (plantSeedOverlay.classList.contains("clickable")) {
+          console.log("UI: Overlay is clickable, sending plant_seed event");
+          hytopia.sendData({ type: "plant_seed" });
+        } else {
+          console.log("UI: Overlay is not clickable, ignoring click");
+        }
+      },
+      { capture: true }
+    );
+  });
+
+  // Add debug logging for raycast updates
+  const originalOnData = hytopia.onData;
+  hytopia.onData = (callback) => {
+    originalOnData((data) => {
+      if (data.type === "raycast_update") {
+        console.log("UI: Raycast update:", {
+          lookingAtDirt: data.lookingAtDirt,
+          heldItem: data.heldItem,
+          overlayClasses: plantSeedOverlay?.classList.toString(),
+        });
+      }
+      callback(data);
+    });
+  };
+
+  // Add mouse input handler for planting
+  let canPlant = false;
+  let isMousePressed = false;
+
+  // Track mouse state
+  document.addEventListener("mousedown", (e) => {
+    if (e.button === 0) {
+      // Left mouse button
+      isMousePressed = true;
+      if (canPlant) {
+        console.log("UI: Mouse pressed, planting seed");
+        hytopia.sendData({ type: "plant_seed" });
+      }
+    }
+  });
+
+  document.addEventListener("mouseup", (e) => {
+    if (e.button === 0) {
+      // Left mouse button
+      isMousePressed = false;
+    }
+  });
 </script>
 
 <!--
@@ -134,6 +223,11 @@ and also configure additional buttons for mobile compatibility.
     <div class="inventory-slot" data-index="7">8</div>
     <div class="inventory-slot" data-index="8">9</div>
   </div>
+</div>
+
+<!-- Add plant seed text overlay -->
+<div id="plant-seed-overlay" class="plant-seed-overlay">
+  <span id="plant-seed-text">Plant Seed</span>
 </div>
 
 <style>
@@ -232,5 +326,36 @@ and also configure additional buttons for mobile compatibility.
   .inventory-slot.selected {
     border-color: #4caf50;
     background-color: rgba(76, 175, 80, 0.2);
+  }
+
+  .plant-seed-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-family: "Inter", sans-serif;
+    font-size: 16px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    z-index: 1000;
+  }
+
+  .plant-seed-overlay.visible {
+    opacity: 1;
+  }
+
+  .plant-seed-overlay.clickable {
+    pointer-events: auto;
+    cursor: pointer;
+    background-color: rgba(76, 175, 80, 0.7);
+  }
+
+  .plant-seed-overlay.clickable:hover {
+    background-color: rgba(76, 175, 80, 0.9);
   }
 </style>

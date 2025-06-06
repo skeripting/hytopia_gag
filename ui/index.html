@@ -4,7 +4,11 @@ updateInventoryUI(data.inventory, data.heldItemIndex); } }); function
 updateInventoryUI(inventory, heldItemIndex) {
 document.querySelectorAll(".inventory-slot").forEach((slot, index) => { const
 item = inventory[index]; const isHeld = index === heldItemIndex; // Reset all
-slots first slot.classList.remove("selected", "empty", "has-item"); if (item) {
+slots first slot.classList.remove("selected", "empty", "has-item"); // Add click
+handler for planting slot.onclick = () => { if (isHeld &&
+item?.includes("Seed")) { // If we're holding a seed, try to plant it
+hytopia.sendData({ type: "plant_seed" }); } else { // Otherwise, just
+hold/select the item hytopia.sendData({ type: "hold", index }); } }; if (item) {
 // If there's an item, show its name slot.textContent = item;
 slot.classList.add("has-item"); if (isHeld) { // If this is the held item, add
 selected class slot.classList.add("selected"); } } else { // If no item, show

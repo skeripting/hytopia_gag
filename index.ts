@@ -34,12 +34,38 @@ import {
   PlayerUIEvent,
   RigidBodyType,
 } from "hytopia";
+import type { RaycastHit } from "hytopia";
 
 import worldMap from "./assets/map.json";
 
 // Add inventory system
 const playerInventories = new Map<string, string[]>();
 const playerHeldItems = new Map<string, Entity | null>();
+const playerHeldItemNames = new Map<string, string | null>();
+
+// Add at the top with other state variables
+const playerRaycastData = new Map<
+  string,
+  {
+    lookingAtDirt: boolean;
+    heldItem: string | null;
+    closestDirtPos: { x: number; y: number; z: number } | null;
+  }
+>();
+
+// Add at the top with other state variables
+const growingSeeds = new Map<
+  string,
+  {
+    entity: Entity;
+    startTime: number;
+    startScale: number;
+    endScale: number;
+    startY: number;
+    endY: number;
+    plantPos: { x: number; y: number; z: number };
+  }
+>();
 
 // Create seed item entity
 const createSeedItem = () => {
@@ -48,7 +74,6 @@ const createSeedItem = () => {
     modelScale: 0.3, // Make it smaller since it's a seed
     rigidBodyOptions: {
       enabled: false, // Disable physics completely
-      enabledRotations: { x: false, y: true, z: false },
     },
   });
 };
@@ -73,6 +98,11 @@ const updatePlayerInventoryUI = (
     heldItemIndex: heldItemIndex,
   });
 };
+
+// Add this helper function for linear interpolation
+function lerp(start: number, end: number, t: number): number {
+  return start + (end - start) * t;
+}
 
 /**
  * startServer is always the entry point for our game.
@@ -122,6 +152,7 @@ startServer((world) => {
     // Initialize player's inventory and held item
     playerInventories.set(player.id, []);
     playerHeldItems.set(player.id, null);
+    playerHeldItemNames.set(player.id, null);
 
     const playerEntity = new DefaultPlayerEntity({
       player,
@@ -157,9 +188,7 @@ startServer((world) => {
       modelUri: "models/npcs/skeleton.gltf",
       modelLoopedAnimations: ["idle"],
       modelScale: 0.8,
-      rigidBodyOptions: {
-        enabledRotations: { x: false, y: true, z: false }, // Only allow rotations around Y axis (Yaw)
-      },
+      rigidBodyOptions: {},
     });
 
     // We need to make the entity rotate 90 degrees around the Y axis
@@ -167,9 +196,329 @@ startServer((world) => {
     // Just like the player entity, we can spawn the skeleton entity
     skeletonSeedSeller.spawn(world, { x: -74, y: 10, z: 10 });
 
+    // Add distance-based dirt detection
+    const dirtCheckInterval = setInterval(() => {
+      const playerEntity =
+        world.entityManager.getPlayerEntitiesByPlayer(player)[0];
+      if (!playerEntity) return;
+
+      // Get player's position
+      const playerPos = playerEntity.position;
+
+      // Convert player position to block coordinates (round down)
+      const playerBlockX = Math.floor(playerPos.x);
+      const playerBlockY = Math.floor(playerPos.y);
+      const playerBlockZ = Math.floor(playerPos.z);
+
+      // Check blocks in a 3x3x3 area around the player
+      let lookingAtDirt = false;
+      let closestDirtPos = null;
+      let minDistance = Infinity;
+      const checkRadius = 2; // Check 2 blocks in each direction
+
+      for (let x = -checkRadius; x <= checkRadius; x++) {
+        for (let y = -checkRadius; y <= checkRadius; y++) {
+          for (let z = -checkRadius; z <= checkRadius; z++) {
+            const blockX = playerBlockX + x;
+            const blockY = playerBlockY + y;
+            const blockZ = playerBlockZ + z;
+
+            // Get block type at this position
+            const blockType = world.chunkLattice.getBlockId({
+              x: blockX,
+              y: blockY,
+              z: blockZ,
+            });
+
+            if (blockType === 13) {
+              // 13 is dirt block ID
+              // Calculate distance to this dirt block
+              const dx = blockX + 0.5 - playerPos.x; // +0.5 to get center of block
+              const dy = blockY + 0.5 - playerPos.y;
+              const dz = blockZ + 0.5 - playerPos.z;
+              const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+              // If we're close enough to the dirt block
+              if (distance <= 3) {
+                // 3 blocks maximum distance
+                lookingAtDirt = true;
+                // Keep track of closest dirt block
+                if (distance < minDistance) {
+                  minDistance = distance;
+                  closestDirtPos = { x: blockX, y: blockY, z: blockZ };
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Get currently held item
+      const heldItem = playerHeldItemNames.get(player.id);
+
+      // Send update to UI
+      const raycastData = {
+        lookingAtDirt,
+        heldItem: heldItem || null,
+        closestDirtPos,
+      } as const;
+
+      player.ui.sendData({
+        type: "raycast_update",
+        ...raycastData,
+      });
+      // Store the data for later use
+      playerRaycastData.set(player.id, raycastData);
+    }, 100);
+
+    // Add input handling for planting
+    const tickInterval = setInterval(() => {
+      const raycastData = playerRaycastData.get(player.id);
+      const heldItem = playerHeldItemNames.get(player.id);
+
+      // Check if we can plant (looking at dirt and holding seed)
+      const canPlant = raycastData?.lookingAtDirt && heldItem?.includes("Seed");
+
+      // make this only print if ml is true
+      if (player.input.ml) {
+        console.log("Server: Can plant:", canPlant);
+      }
+
+      // If left mouse is pressed and we can plant
+      if (player.input.ml && canPlant) {
+        console.log("Server: Planting seed from input");
+
+        // Get the closest dirt position from our stored raycast data
+        if (raycastData?.closestDirtPos) {
+          const plantPos = {
+            x: raycastData.closestDirtPos.x + 0.5,
+            y: raycastData.closestDirtPos.y + 1,
+            z: raycastData.closestDirtPos.z + 0.5,
+          };
+
+          // Create a new entity for the planted seed
+          const plantedSeed = new Entity({
+            modelUri: "models/items/stick.gltf",
+            modelScale: 0.3,
+            rigidBodyOptions: {
+              enabled: true,
+              type: RigidBodyType.FIXED,
+            },
+          });
+
+          // Spawn the planted seed
+          plantedSeed.spawn(world, plantPos);
+
+          // Add to growing seeds map
+          const seedId = `${plantPos.x},${plantPos.y},${plantPos.z}`;
+          growingSeeds.set(seedId, {
+            entity: plantedSeed,
+            startTime: Date.now(),
+            startScale: 0.3,
+            endScale: 0.6,
+            startY: plantPos.y,
+            endY: plantPos.y + 0.5, // Grow upward
+            plantPos: plantPos,
+          });
+
+          // Get inventory and remove the seed
+          const inventory = playerInventories.get(player.id) || [];
+          const heldItemIndex = inventory.findIndex(
+            (item) => item === heldItem
+          );
+          if (heldItemIndex !== -1) {
+            inventory.splice(heldItemIndex, 1);
+            playerInventories.set(player.id, inventory);
+          }
+
+          // Despawn the held seed if it exists
+          const heldItemEntity = playerHeldItems.get(player.id);
+          if (heldItemEntity) {
+            heldItemEntity.despawn();
+          }
+
+          // Clear held item references
+          playerHeldItems.set(player.id, null);
+          playerHeldItemNames.set(player.id, null);
+
+          // Update inventory UI
+          updatePlayerInventoryUI(player, world, null);
+
+          // Notify player
+          world.chatManager.sendPlayerMessage(
+            player,
+            `Planted ${heldItem}! 🌱`,
+            "00FF00"
+          );
+
+          // Cancel the input so we don't plant multiple times
+          player.input.ml = false;
+        }
+      }
+    }, 50);
+
+    // Add growth animation tick
+    const growthInterval = setInterval(() => {
+      const now = Date.now();
+      growingSeeds.forEach((seed, id) => {
+        const elapsed = now - seed.startTime;
+        const growthDuration = 4000; // 4 seconds
+        const t = Math.min(elapsed / growthDuration, 1);
+
+        if (t >= 1) {
+          // Growth complete, replace with carrot
+          seed.entity.despawn();
+          growingSeeds.delete(id);
+
+          // Create carrot entity with proper model and properties
+          const carrot = new Entity({
+            modelUri: "models/items/carrot.gltf", // Using carrot model
+            modelScale: 1.2, // Make it a bit bigger
+            modelLoopedAnimations: ["idle"], // Add idle animation if available
+            rigidBodyOptions: {
+              enabled: true,
+              type: RigidBodyType.FIXED,
+            },
+          });
+
+          // Spawn carrot at final position with slight random rotation
+          const finalRotation = {
+            x: 0,
+            y: Math.random() * Math.PI * 2, // Random rotation around Y
+            z: 0,
+            w: 1,
+          };
+
+          carrot.spawn(world, {
+            ...seed.plantPos,
+            y: seed.endY,
+          });
+          carrot.setRotation(finalRotation);
+
+          // Add a small bounce animation when fully grown
+          const originalY = seed.endY;
+          carrot.setPosition({ ...seed.plantPos, y: originalY + 0.2 });
+          setTimeout(() => {
+            carrot.setPosition({ ...seed.plantPos, y: originalY });
+          }, 200);
+
+          // Notify nearby players with a more exciting message
+          world.chatManager.sendPlayerMessage(
+            player,
+            `✨ A fresh carrot has grown! 🥕`,
+            "FFA500"
+          );
+        } else {
+          // Update scale and position using lerp
+          const currentScale = lerp(seed.startScale, seed.endScale, t);
+          const currentY = lerp(seed.startY, seed.endY, t);
+
+          // Create new entity with updated scale
+          const newEntity = new Entity({
+            modelUri: "models/items/stick.gltf",
+            modelScale: currentScale,
+            rigidBodyOptions: {
+              enabled: true,
+              type: RigidBodyType.FIXED,
+            },
+          });
+
+          // Spawn at current position
+          newEntity.spawn(world, {
+            ...seed.plantPos,
+            y: currentY,
+          });
+
+          // Replace old entity
+          seed.entity.despawn();
+          seed.entity = newEntity;
+        }
+      });
+    }, 16); // ~60fps
+
+    // Handle planting seeds
     player.ui.on(PlayerUIEvent.DATA, ({ playerUI, data }) => {
       if (data.type === "hold") {
         handleItemHold(player, world, playerEntity, data.index);
+      } else if (data.type === "plant_seed") {
+        console.log("Server: Planting seed");
+        const inventory = playerInventories.get(player.id) || [];
+        const heldItem = playerHeldItems.get(player.id);
+        const heldItemName = playerHeldItemNames.get(player.id);
+        const heldItemIndex = heldItemName
+          ? inventory.findIndex((item) => item === heldItemName)
+          : -1;
+
+        // Get the closest dirt position from our stored raycast data
+        const raycastData = playerRaycastData.get(player.id);
+
+        if (
+          heldItemIndex !== -1 &&
+          heldItemName?.includes("Seed") &&
+          raycastData?.closestDirtPos
+        ) {
+          // Create a seed entity at the dirt position
+          const plantPos = {
+            x: raycastData.closestDirtPos.x + 0.5, // Center on the block
+            y: raycastData.closestDirtPos.y + 0.1, // Slightly above the dirt
+            z: raycastData.closestDirtPos.z + 0.5, // Center on the block
+          };
+
+          // Create a new entity for the planted seed
+          const plantedSeed = new Entity({
+            modelUri: "models/items/stick.gltf",
+            modelScale: 0.3,
+            rigidBodyOptions: {
+              enabled: true,
+              type: RigidBodyType.FIXED,
+            },
+          });
+
+          // Spawn the planted seed
+          plantedSeed.spawn(world, plantPos);
+
+          // Remove the seed from inventory
+          inventory.splice(heldItemIndex, 1);
+          playerInventories.set(player.id, inventory);
+
+          // Despawn the held seed if it exists
+          if (heldItem) {
+            heldItem.despawn();
+          }
+
+          // Clear held item references
+          playerHeldItems.set(player.id, null);
+          playerHeldItemNames.set(player.id, null);
+
+          // Update inventory UI
+          updatePlayerInventoryUI(player, world, null);
+
+          // Notify player
+          world.chatManager.sendPlayerMessage(
+            player,
+            `Planted ${heldItemName}! 🌱`,
+            "00FF00"
+          );
+
+          // Add a small animation to make it look like it's being planted
+          const originalY = plantPos.y;
+          plantedSeed.setPosition({ ...plantPos, y: originalY + 0.2 }); // Start slightly higher
+          setTimeout(() => {
+            plantedSeed.setPosition({ ...plantPos, y: originalY }); // Settle into place
+          }, 200);
+        } else if (!raycastData?.closestDirtPos) {
+          world.chatManager.sendPlayerMessage(
+            player,
+            "You need to be near dirt to plant seeds!",
+            "FF0000"
+          );
+        } else if (!heldItemName?.includes("Seed")) {
+          world.chatManager.sendPlayerMessage(
+            player,
+            "You need to hold a seed to plant it!",
+            "FF0000"
+          );
+        }
       }
     });
 
@@ -213,6 +562,7 @@ startServer((world) => {
         inventory.indexOf(selectedItem) === index
       ) {
         currentHeldItem.despawn();
+        playerHeldItemNames.set(player.id, null);
         return; // The despawn event will handle the UI update and message
       }
 
@@ -221,6 +571,7 @@ startServer((world) => {
         if (currentHeldItem) {
           // Don't send message here, it will be sent by the despawn event
           currentHeldItem.despawn();
+          playerHeldItemNames.set(player.id, null);
         }
 
         // Create new item
@@ -245,8 +596,9 @@ startServer((world) => {
 
         itemEntity.spawn(world, spawnPos);
 
-        // Store the item entity and update held item index
+        // Store the item entity and update held item name
         playerHeldItems.set(player.id, itemEntity);
+        playerHeldItemNames.set(player.id, selectedItem);
 
         // Set as child of player immediately
         itemEntity.setParent(playerEntity);
@@ -270,14 +622,24 @@ startServer((world) => {
               player,
               `Stopped holding ${selectedItem}`
             );
-            // Clear the held item reference
+            // Clear the held item references
             playerHeldItems.set(player.id, null);
+            playerHeldItemNames.set(player.id, null);
           }
         });
       } else {
         world.chatManager.sendPlayerMessage(player, "No item in that slot!");
       }
     }
+
+    // Clean up when player leaves
+    player.on(PlayerEvent.LEFT_WORLD, () => {
+      clearInterval(tickInterval);
+      clearInterval(growthInterval);
+      clearInterval(dirtCheckInterval);
+      playerRaycastData.delete(player.id);
+      playerHeldItemNames.delete(player.id);
+    });
   });
 
   // Update buy command to handle seeds
