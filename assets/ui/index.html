@@ -40,6 +40,11 @@ and also configure additional buttons for mobile compatibility.
     //console.log("UI: Received data:", data); // Debug log for all data
     if (data.type === "inventory_update" && data.inventory) {
       updateInventoryUI(data.inventory, data.heldItemIndex);
+    } else if (data.type === "cash_update") {
+      updateCashUI(data.cash);
+    } else if (data.type === "sell_notification") {
+      showSellNotification(data.plantsSold, data.totalEarnings);
+      animateCashEarnings(data.totalEarnings);
     } else if (data.type === "raycast_update") {
       const overlay = document.getElementById("plant-seed-overlay");
       const text = document.getElementById("plant-seed-text");
@@ -95,7 +100,7 @@ and also configure additional buttons for mobile compatibility.
             plantProgressFill.style.backgroundColor = "#FF9800"; // Orange for growing
             plantProgressOverlay.classList.remove("harvest-ready");
           } else {
-            plantProgressFill.style.backgroundColor = "#2196F3"; // Blue for early growth
+            plantProgressFill.style.backgroundColor = "#FF0000"; // red for early growth
             plantProgressOverlay.classList.remove("harvest-ready");
           }
 
@@ -145,6 +150,42 @@ and also configure additional buttons for mobile compatibility.
         slot.classList.add("empty");
       }
     });
+  }
+
+  function updateCashUI(cash) {
+    const cashDisplay = document.getElementById("cash-display");
+    if (cashDisplay) {
+      cashDisplay.textContent = `$${cash}`;
+    }
+  }
+
+  function showSellNotification(plantsSold, totalEarnings) {
+    const notification = document.getElementById("sell-notification");
+    const notificationText = document.getElementById("sell-notification-text");
+
+    if (notification && notificationText) {
+      const plantWord = plantsSold === 1 ? "plant" : "plants";
+      notificationText.textContent = `Sold ${plantsSold} ${plantWord} for $${totalEarnings}!`;
+      notification.classList.add("visible");
+
+      // Hide notification after 3 seconds
+      setTimeout(() => {
+        notification.classList.remove("visible");
+      }, 3000);
+    }
+  }
+
+  function animateCashEarnings(earnings) {
+    const cashDisplay = document.getElementById("cash-display");
+    if (cashDisplay) {
+      // Add animation class
+      cashDisplay.classList.add("cash-earned");
+
+      // Remove animation class after animation completes
+      setTimeout(() => {
+        cashDisplay.classList.remove("cash-earned");
+      }, 1000);
+    }
   }
 
   // Handle number keys 1-9 to select inventory slots
@@ -280,6 +321,11 @@ and also configure additional buttons for mobile compatibility.
   </div>
 </div>
 
+<!-- Add cash display -->
+<div class="cash-container">
+  <div id="cash-display" class="cash-display">$0</div>
+</div>
+
 <!-- Add plant seed text overlay -->
 <div id="plant-seed-overlay" class="plant-seed-overlay">
   <span id="plant-seed-text">Plant Seed</span>
@@ -292,6 +338,13 @@ and also configure additional buttons for mobile compatibility.
   </div>
   <div id="plant-progress-bar" class="plant-progress-bar">
     <div id="plant-progress-fill" class="plant-progress-fill"></div>
+  </div>
+</div>
+
+<!-- Add sell notification overlay -->
+<div id="sell-notification" class="sell-notification">
+  <div id="sell-notification-text" class="sell-notification-text">
+    Sold 0 plants for 0 cash!
   </div>
 </div>
 
@@ -486,5 +539,93 @@ and also configure additional buttons for mobile compatibility.
     border-radius: 4px;
     transition: width 0.3s ease, background-color 0.3s ease;
     width: 0%;
+  }
+
+  .cash-container {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    z-index: 1000;
+  }
+
+  .cash-display {
+    background-color: rgba(0, 0, 0, 0.8);
+    color: #ffd700;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-family: "Inter", sans-serif;
+    font-size: 18px;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+    border: 2px solid #ffd700;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    min-width: 80px;
+    text-align: center;
+    transition: all 0.3s ease;
+  }
+
+  .cash-display.cash-earned {
+    transform: scale(1.2);
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.8);
+    background-color: rgba(0, 0, 0, 0.9);
+    animation: cashPulse 1s ease-in-out;
+  }
+
+  @keyframes cashPulse {
+    0% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.3);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  .sell-notification {
+    position: fixed;
+    top: 33%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.9);
+    color: #00ff00;
+    padding: 15px 25px;
+    border-radius: 10px;
+    font-family: "Inter", sans-serif;
+    font-size: 20px;
+    font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+    border: 3px solid #00ff00;
+    box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+    pointer-events: none;
+    opacity: 0;
+    transition: all 0.5s ease;
+    z-index: 2000;
+    text-align: center;
+  }
+
+  .sell-notification.visible {
+    opacity: 1;
+    animation: sellNotificationSlide 3s ease-in-out;
+  }
+
+  @keyframes sellNotificationSlide {
+    0% {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-20px);
+    }
+    20% {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    80% {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-20px);
+    }
   }
 </style>

@@ -44,6 +44,9 @@ const playerInventories = new Map<string, string[]>();
 const playerHeldItems = new Map<string, Entity | null>();
 const playerHeldItemNames = new Map<string, string | null>();
 
+// Add cash system
+const playerCash = new Map<string, number>();
+
 // Add to the raycast data type
 type RaycastData = {
   lookingAtDirt: boolean;
@@ -86,6 +89,8 @@ type PlantType = {
   finalHeight: number;
   color: string;
   emoji: string;
+  cost: number;
+  sellPrice: number;
 };
 
 type PlantTypes = {
@@ -103,6 +108,8 @@ const PLANT_TYPES: PlantTypes = {
     finalHeight: 0.5,
     color: "FFA500", // Orange
     emoji: "🥕",
+    cost: 10, // 10 cash
+    sellPrice: 15, // 15 cash
   },
   "melon-seed": {
     name: "Melon Seed",
@@ -114,6 +121,8 @@ const PLANT_TYPES: PlantTypes = {
     finalHeight: 0.3,
     color: "00FF00", // Green
     emoji: "🍈",
+    cost: 25, // 25 cash
+    sellPrice: 30, // 30 cash
   },
   "potato-seed": {
     name: "Potato Seed",
@@ -125,6 +134,8 @@ const PLANT_TYPES: PlantTypes = {
     finalHeight: 0.6,
     color: "8B4513", // Brown
     emoji: "🥔",
+    cost: 15, // 15 cash
+    sellPrice: 20, // 20 cash
   },
   "cookie-seed": {
     name: "Cookie Seed",
@@ -136,6 +147,8 @@ const PLANT_TYPES: PlantTypes = {
     finalHeight: 1.5,
     color: "8B4513", // Gold
     emoji: "🍪",
+    cost: 50, // 50 cash
+    sellPrice: 60, // 60 cash
   },
 } as const;
 
@@ -226,6 +239,9 @@ startServer((world) => {
     playerHeldItems.set(player.id, null);
     playerHeldItemNames.set(player.id, null);
 
+    // Initialize player's cash
+    playerCash.set(player.id, 10);
+
     const playerEntity = new DefaultPlayerEntity({
       player,
       name: "Player",
@@ -236,6 +252,12 @@ startServer((world) => {
     // Load UI and send initial inventory data
     player.ui.load("ui/index.html");
     updatePlayerInventoryUI(player, world);
+
+    // Send initial cash data
+    player.ui.sendData({
+      type: "cash_update",
+      cash: 10,
+    });
 
     // Send a nice welcome message that only the player who joined will see ;)
     world.chatManager.sendPlayerMessage(
@@ -1043,16 +1065,19 @@ startServer((world) => {
       clearInterval(dirtCheckInterval);
       playerRaycastData.delete(player.id);
       playerHeldItemNames.delete(player.id);
+      playerCash.delete(player.id);
     });
   });
 
-  // Update buy command to handle all seed types
+  // Update buy command to handle cash system
   world.chatManager.registerCommand("/buy", (player, args) => {
     if (!args[0]) {
       const plantList = Object.entries(PLANT_TYPES)
         .map(([type, info]) => {
           const growthTimeInSeconds = info.growthTime / 1000;
-          return `${type.replace("-seed", "")} (${growthTimeInSeconds}s)`;
+          return `${type.replace("-seed", "")} (${
+            info.cost
+          } cash, ${growthTimeInSeconds}s)`;
         })
         .join(", ");
 
@@ -1070,6 +1095,23 @@ startServer((world) => {
       const plantInfo = PLANT_TYPES[seedType];
       if (!plantInfo) return; // Type guard for TypeScript
 
+      // Get player's current cash
+      const currentCash = playerCash.get(player.id) || 0;
+
+      // Check if player has enough cash
+      if (currentCash < plantInfo.cost) {
+        world.chatManager.sendPlayerMessage(
+          player,
+          `Not enough cash! You need ${plantInfo.cost} cash but only have ${currentCash} cash.`,
+          "FF0000"
+        );
+        return;
+      }
+
+      // Deduct cash from player
+      const newCash = currentCash - plantInfo.cost;
+      playerCash.set(player.id, newCash);
+
       // Get player's inventory
       const inventory = playerInventories.get(player.id) || [];
 
@@ -1079,6 +1121,12 @@ startServer((world) => {
 
       // Update the inventory UI
       updatePlayerInventoryUI(player, world);
+
+      // Update cash UI
+      player.ui.sendData({
+        type: "cash_update",
+        cash: newCash,
+      });
 
       // Spawn a visual seed entity that follows the player briefly
       const seed = new Entity({
@@ -1104,9 +1152,10 @@ startServer((world) => {
       const growthTimeInSeconds = plantInfo.growthTime / 1000;
       world.chatManager.sendPlayerMessage(
         player,
-        `You bought a ${plantInfo.name}! 🌱 (Growth time: ${growthTimeInSeconds} seconds)`,
+        `You bought a ${plantInfo.name} for ${plantInfo.cost} cash! 🌱 (Growth time: ${growthTimeInSeconds} seconds)`,
         "00FF00"
       );
+      world.chatManager.sendPlayerMessage(player, `Remaining cash: ${newCash}`);
       world.chatManager.sendPlayerMessage(
         player,
         "Use /hold <slot> to hold an item (e.g. /hold 0)"
@@ -1115,7 +1164,9 @@ startServer((world) => {
       const plantList = Object.entries(PLANT_TYPES)
         .map(([type, info]) => {
           const growthTimeInSeconds = info.growthTime / 1000;
-          return `${type.replace("-seed", "")} (${growthTimeInSeconds}s)`;
+          return `${type.replace("-seed", "")} (${
+            info.cost
+          } cash, ${growthTimeInSeconds}s)`;
         })
         .join(", ");
 
@@ -1149,6 +1200,105 @@ startServer((world) => {
     }
   });
 
+  // Add command to check cash
+  world.chatManager.registerCommand("/cash", (player) => {
+    const cash = playerCash.get(player.id) || 0;
+    world.chatManager.sendPlayerMessage(
+      player,
+      `You have ${cash} cash.`,
+      "FFD700"
+    );
+  });
+
+  // Add sell command to sell harvested plants
+  world.chatManager.registerCommand("/sell", (player) => {
+    const inventory = playerInventories.get(player.id) || [];
+    const currentCash = playerCash.get(player.id) || 0;
+
+    // Filter out seeds (only sell harvested plants)
+    const harvestedPlants = inventory.filter((item) => !item.includes("Seed"));
+
+    if (harvestedPlants.length === 0) {
+      world.chatManager.sendPlayerMessage(
+        player,
+        "You don't have any harvested plants to sell!",
+        "FF0000"
+      );
+      return;
+    }
+
+    let totalEarnings = 0;
+    const soldItems: { name: string; count: number; price: number }[] = [];
+
+    // Count and calculate earnings for each plant type
+    const plantCounts = harvestedPlants.reduce((acc, item) => {
+      acc[item] = (acc[item] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    // Find selling prices for each plant
+    Object.entries(plantCounts).forEach(([plantName, count]) => {
+      const plantInfo = Object.values(PLANT_TYPES).find(
+        (info): info is PlantType =>
+          info.name.replace(" Seed", "") === plantName
+      );
+
+      if (plantInfo) {
+        const earnings = plantInfo.sellPrice * count;
+        totalEarnings += earnings;
+        soldItems.push({
+          name: plantName,
+          count: count,
+          price: plantInfo.sellPrice,
+        });
+      }
+    });
+
+    // Update player's cash
+    const newCash = currentCash + totalEarnings;
+    playerCash.set(player.id, newCash);
+
+    // Remove sold plants from inventory
+    const newInventory = inventory.filter((item) => item.includes("Seed"));
+    playerInventories.set(player.id, newInventory);
+
+    // Update UI
+    updatePlayerInventoryUI(player, world);
+    player.ui.sendData({
+      type: "cash_update",
+      cash: newCash,
+    });
+
+    // Send sell notification to UI
+    player.ui.sendData({
+      type: "sell_notification",
+      plantsSold: harvestedPlants.length,
+      totalEarnings: totalEarnings,
+    });
+
+    // Send success message with details
+    world.chatManager.sendPlayerMessage(
+      player,
+      `💰 Sold ${harvestedPlants.length} plants for ${totalEarnings} cash!`,
+      "00FF00"
+    );
+
+    // Show breakdown of what was sold
+    soldItems.forEach((item) => {
+      world.chatManager.sendPlayerMessage(
+        player,
+        `  ${item.count}x ${item.name} - ${item.price} cash each`,
+        "00FF00"
+      );
+    });
+
+    world.chatManager.sendPlayerMessage(
+      player,
+      `New balance: ${newCash} cash`,
+      "FFD700"
+    );
+  });
+
   /**
    * Handle player leaving the game. The PlayerEvent.LEFT_WORLD
    * event is emitted to the world when a player leaves the game.
@@ -1174,6 +1324,9 @@ startServer((world) => {
 
     // Clean up inventory
     playerInventories.delete(player.id);
+
+    // Clean up cash
+    playerCash.delete(player.id);
 
     // Clean up player entity
     world.entityManager
