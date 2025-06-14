@@ -33,6 +33,7 @@ import {
   BaseEntityControllerEvent,
   PlayerUIEvent,
   RigidBodyType,
+  Vector3,
 } from "hytopia";
 import type { RaycastHit } from "hytopia";
 
@@ -43,15 +44,21 @@ const playerInventories = new Map<string, string[]>();
 const playerHeldItems = new Map<string, Entity | null>();
 const playerHeldItemNames = new Map<string, string | null>();
 
-// Add at the top with other state variables
-const playerRaycastData = new Map<
-  string,
-  {
-    lookingAtDirt: boolean;
-    heldItem: string | null;
-    closestDirtPos: { x: number; y: number; z: number } | null;
-  }
->();
+// Add to the raycast data type
+type RaycastData = {
+  lookingAtDirt: boolean;
+  heldItem: string | null;
+  closestDirtPos: { x: number; y: number; z: number } | null;
+  nearbyPlant: {
+    name: string;
+    position: { x: number; y: number; z: number };
+  } | null;
+  plantProgress: number;
+  isPlantFullyGrown: boolean;
+};
+
+// Update the playerRaycastData map type
+const playerRaycastData = new Map<string, RaycastData>();
 
 // Update the GrowingSeed type to be more specific
 type GrowingSeed = {
@@ -89,7 +96,7 @@ const PLANT_TYPES: PlantTypes = {
   "carrot-seed": {
     name: "Carrot Seed",
     seedModel: "models/items/stick.gltf",
-    plantModel: "models/items/bone.gltf",
+    plantModel: "models/items/carrot.gltf",
     seedScale: 0.3,
     plantScale: 1.2,
     growthTime: 4000, // 4 seconds
@@ -261,7 +268,7 @@ startServer((world) => {
     // Just like the player entity, we can spawn the skeleton entity
     skeletonSeedSeller.spawn(world, { x: -74, y: 10, z: 10 });
 
-    // Add distance-based dirt detection
+    // Update the dirt check interval to ensure progress data is being sent
     const dirtCheckInterval = setInterval(() => {
       const playerEntity =
         world.entityManager.getPlayerEntitiesByPlayer(player)[0];
@@ -275,12 +282,18 @@ startServer((world) => {
       const playerBlockY = Math.floor(playerPos.y);
       const playerBlockZ = Math.floor(playerPos.z);
 
-      // Check blocks in a 3x3x3 area around the player
+      // Check blocks and plants in a 3x3x3 area around the player
       let lookingAtDirt = false;
       let closestDirtPos = null;
       let minDistance = Infinity;
-      const checkRadius = 2; // Check 2 blocks in each direction
+      const checkRadius = 2;
 
+      // Check for nearby growing plants
+      let nearbyPlant: RaycastData["nearbyPlant"] = null;
+      let plantProgress = 0;
+      let isPlantFullyGrown = false;
+
+      // Check for dirt blocks
       for (let x = -checkRadius; x <= checkRadius; x++) {
         for (let y = -checkRadius; y <= checkRadius; y++) {
           for (let z = -checkRadius; z <= checkRadius; z++) {
@@ -288,7 +301,6 @@ startServer((world) => {
             const blockY = playerBlockY + y;
             const blockZ = playerBlockZ + z;
 
-            // Get block type at this position
             const blockType = world.chunkLattice.getBlockId({
               x: blockX,
               y: blockY,
@@ -296,18 +308,14 @@ startServer((world) => {
             });
 
             if (blockType === 13) {
-              // 13 is dirt block ID
-              // Calculate distance to this dirt block
-              const dx = blockX + 0.5 - playerPos.x; // +0.5 to get center of block
+              // 13 is dirt block
+              const dx = blockX + 0.5 - playerPos.x;
               const dy = blockY + 0.5 - playerPos.y;
               const dz = blockZ + 0.5 - playerPos.z;
               const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-              // If we're close enough to the dirt block
               if (distance <= 3) {
-                // 3 blocks maximum distance
                 lookingAtDirt = true;
-                // Keep track of closest dirt block
                 if (distance < minDistance) {
                   minDistance = distance;
                   closestDirtPos = { x: blockX, y: blockY, z: blockZ };
@@ -318,20 +326,124 @@ startServer((world) => {
         }
       }
 
+      growingSeeds.forEach((seed, id) => {
+        const dx = seed.plantPos.x - playerPos.x;
+        const dy = seed.plantPos.y - playerPos.y;
+        const dz = seed.plantPos.z - playerPos.z;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (distance <= 3) {
+          const plantInfo = Object.values(PLANT_TYPES).find(
+            (info): info is PlantType => info.name === seed.plantName
+          );
+
+          console.log("Server: Found plant info for seed:", {
+            seedName: seed.plantName,
+            plantInfo: plantInfo?.name,
+          });
+
+          if (plantInfo) {
+            const elapsed = Date.now() - seed.startTime;
+            const progress = Math.min(
+              (elapsed / plantInfo.growthTime) * 100,
+              100
+            );
+            const fullyGrown = progress >= 100;
+
+            console.log("Server: Seed progress:", {
+              seedName: seed.plantName,
+              elapsed,
+              progress,
+              fullyGrown,
+            });
+
+            // Only update if this is the closest plant
+            if (
+              !nearbyPlant ||
+              distance <
+                Math.sqrt(
+                  Math.pow(seed.plantPos.x - playerPos.x, 2) +
+                    Math.pow(seed.plantPos.y - playerPos.y, 2) +
+                    Math.pow(seed.plantPos.z - playerPos.z, 2)
+                )
+            ) {
+              console.log(
+                "OK. set the plant progress because its a nearby plant"
+              );
+              nearbyPlant = {
+                name: plantInfo.name,
+                position: { ...seed.plantPos },
+              };
+              plantProgress = progress;
+              isPlantFullyGrown = fullyGrown;
+            }
+          }
+        }
+      });
+
+      // Check for fully grown plants (entities that are not in growingSeeds)
+      const allEntities = world.entityManager.getAllEntities();
+      allEntities.forEach((entity) => {
+        // Check if this entity is a plant (has plant model)
+        const entityPos = entity.position;
+        const dx = entityPos.x - playerPos.x;
+        const dy = entityPos.y - playerPos.y;
+        const dz = entityPos.z - playerPos.z;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (distance <= 3) {
+          // Check if this entity is a fully grown plant by looking at its model
+          const entityModel = entity.modelUri;
+
+          // Check if this entity is a fully grown plant by looking for plant model names
+          if (
+            entityModel &&
+            (entityModel.includes("carrot.gltf") ||
+              entityModel.includes("melon.gltf") ||
+              entityModel.includes("potato.gltf") ||
+              entityModel.includes("cookie.gltf"))
+          ) {
+            // Find the plant info based on the model
+            const plantInfo = Object.values(PLANT_TYPES).find(
+              (info): info is PlantType => info.plantModel === entityModel
+            );
+
+            if (plantInfo) {
+              // Only update if this is the closest plant and we don't already have a growing seed nearby
+              if (
+                !nearbyPlant ||
+                distance < Math.sqrt(dx * dx + dy * dy + dz * dz)
+              ) {
+                nearbyPlant = {
+                  name: plantInfo.name,
+                  position: { ...entityPos },
+                };
+                plantProgress = 100; // Fully grown
+                isPlantFullyGrown = true;
+              }
+            }
+          }
+        }
+      });
+
       // Get currently held item
       const heldItem = playerHeldItemNames.get(player.id);
 
-      // Send update to UI
-      const raycastData = {
+      // Send update to UI with debug logging
+      const raycastData: RaycastData = {
         lookingAtDirt,
         heldItem: heldItem || null,
         closestDirtPos,
-      } as const;
+        nearbyPlant,
+        plantProgress,
+        isPlantFullyGrown,
+      };
 
       player.ui.sendData({
         type: "raycast_update",
         ...raycastData,
       });
+
       // Store the data for later use
       playerRaycastData.set(player.id, raycastData);
     }, 100);
@@ -553,11 +665,11 @@ startServer((world) => {
           };
 
           const plantInfo = Object.values(PLANT_TYPES).find(
-            (info): info is PlantType => info.name === heldItem
+            (info): info is PlantType => info.name === heldItemName
           );
 
-          if (!plantInfo || !heldItem) {
-            console.error("Unknown plant type or no item held:", heldItem);
+          if (!plantInfo || !heldItemName) {
+            console.error("Unknown plant type or no item held:", heldItemName);
             return;
           }
 
@@ -579,8 +691,9 @@ startServer((world) => {
           playerInventories.set(player.id, inventory);
 
           // Despawn the held seed if it exists
-          if (heldItem) {
-            heldItem.despawn();
+          const heldItemEntity = playerHeldItems.get(player.id);
+          if (heldItemEntity) {
+            heldItemEntity.despawn();
           }
 
           // Clear held item references
@@ -616,6 +729,186 @@ startServer((world) => {
             "FF0000"
           );
         }
+      } else if (data.type === "harvest_plant") {
+        console.log("Server: Harvest plant request received"); // Debug log
+
+        const raycastData = playerRaycastData.get(player.id);
+        if (!raycastData?.nearbyPlant) {
+          console.log("Server: No nearby plant found"); // Debug log
+          return;
+        }
+
+        console.log("Server: Nearby plant found:", raycastData.nearbyPlant); // Debug log
+
+        // First, try to find a growing seed by position
+        const seedId = Array.from(growingSeeds.entries()).find(([_, seed]) => {
+          const dx = seed.plantPos.x - raycastData.nearbyPlant!.position.x;
+          const dy = seed.plantPos.y - raycastData.nearbyPlant!.position.y;
+          const dz = seed.plantPos.z - raycastData.nearbyPlant!.position.z;
+          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          return distance < 0.1; // Use a small threshold for position matching
+        })?.[0];
+
+        console.log("Server: Found seed ID:", seedId); // Debug log
+
+        if (seedId) {
+          // Handle growing seed harvest
+          const seed = growingSeeds.get(seedId);
+          if (!seed) {
+            console.log("Server: Seed not found in growing seeds map"); // Debug log
+            return;
+          }
+
+          const plantInfo = Object.values(PLANT_TYPES).find(
+            (info): info is PlantType => info.name === seed.plantName
+          );
+
+          if (!plantInfo) {
+            console.log("Server: Plant info not found for:", seed.plantName); // Debug log
+            return;
+          }
+
+          // Only allow harvesting if fully grown
+          const elapsed = Date.now() - seed.startTime;
+          if (elapsed < plantInfo.growthTime) {
+            console.log("Server: Plant not fully grown yet"); // Debug log
+            world.chatManager.sendPlayerMessage(
+              player,
+              "This plant is not ready to harvest yet!",
+              "FF0000"
+            );
+            return;
+          }
+
+          console.log("Server: Harvesting growing seed:", plantInfo.name); // Debug log
+
+          // Remove the growing seed
+          seed.entity.despawn();
+          growingSeeds.delete(seedId);
+
+          // Add harvested item to inventory
+          const inventory = playerInventories.get(player.id) || [];
+          const harvestedItem = plantInfo.name.replace(" Seed", "");
+          inventory.push(harvestedItem);
+          playerInventories.set(player.id, inventory);
+
+          // Update inventory UI
+          updatePlayerInventoryUI(player, world);
+
+          // Notify player with a more exciting message
+          world.chatManager.sendPlayerMessage(
+            player,
+            `✨ Harvested a ${harvestedItem}! ${plantInfo.emoji}`,
+            plantInfo.color
+          );
+
+          // Add a small animation effect
+          const harvestEffect = new Entity({
+            modelUri: plantInfo.plantModel,
+            modelScale: plantInfo.plantScale * 0.5,
+            rigidBodyOptions: {
+              enabled: false,
+            },
+          });
+
+          harvestEffect.spawn(world, {
+            ...seed.plantPos,
+            y: seed.plantPos.y + 0.5,
+          });
+
+          // Make the harvested item float up and fade out
+          setTimeout(() => {
+            harvestEffect.despawn();
+          }, 1000);
+        } else {
+          // Handle fully grown plant entity harvest
+          console.log(
+            "Server: No growing seed found, checking for fully grown plant entity"
+          ); // Debug log
+
+          // Find the plant entity at the nearby plant position
+          const allEntities = world.entityManager.getAllEntities();
+          const plantEntity = allEntities.find((entity) => {
+            const entityPos = entity.position;
+            const dx = entityPos.x - raycastData.nearbyPlant!.position.x;
+            const dy = entityPos.y - raycastData.nearbyPlant!.position.y;
+            const dz = entityPos.z - raycastData.nearbyPlant!.position.z;
+            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            return distance < 0.1; // Use a small threshold for position matching
+          });
+
+          if (plantEntity) {
+            console.log("Server: Found plant entity to harvest"); // Debug log
+
+            // Find the plant info based on the entity's model
+            const entityModel = plantEntity.modelUri;
+            const plantInfo = Object.values(PLANT_TYPES).find(
+              (info): info is PlantType => info.plantModel === entityModel
+            );
+
+            if (plantInfo) {
+              console.log(
+                "Server: Harvesting fully grown plant:",
+                plantInfo.name
+              ); // Debug log
+
+              // Remove the plant entity
+              plantEntity.despawn();
+
+              // Add harvested item to inventory
+              const inventory = playerInventories.get(player.id) || [];
+              const harvestedItem = plantInfo.name.replace(" Seed", "");
+              inventory.push(harvestedItem);
+              playerInventories.set(player.id, inventory);
+
+              // Update inventory UI
+              updatePlayerInventoryUI(player, world);
+
+              // Notify player with a more exciting message
+              world.chatManager.sendPlayerMessage(
+                player,
+                `✨ Harvested a ${harvestedItem}! ${plantInfo.emoji}`,
+                plantInfo.color
+              );
+
+              // Add a small animation effect
+              const harvestEffect = new Entity({
+                modelUri: plantInfo.plantModel,
+                modelScale: plantInfo.plantScale * 0.5,
+                rigidBodyOptions: {
+                  enabled: false,
+                },
+              });
+
+              harvestEffect.spawn(world, {
+                ...raycastData.nearbyPlant.position,
+                y: raycastData.nearbyPlant.position.y + 0.5,
+              });
+
+              // Make the harvested item float up and fade out
+              setTimeout(() => {
+                harvestEffect.despawn();
+              }, 1000);
+            } else {
+              console.log(
+                "Server: Plant info not found for entity model:",
+                entityModel
+              ); // Debug log
+              world.chatManager.sendPlayerMessage(
+                player,
+                "Unknown plant type!",
+                "FF0000"
+              );
+            }
+          } else {
+            console.log("Server: No plant entity found at position"); // Debug log
+            world.chatManager.sendPlayerMessage(
+              player,
+              "No plant found to harvest!",
+              "FF0000"
+            );
+          }
+        }
       }
     });
 
@@ -641,7 +934,7 @@ startServer((world) => {
       handleItemHold(player, world, playerEntity, index);
     });
 
-    // Function to handle holding items (used by both UI and command)
+    // Update the held item visualization
     function handleItemHold(
       player: any,
       world: any,
@@ -660,70 +953,84 @@ startServer((world) => {
       ) {
         currentHeldItem.despawn();
         playerHeldItemNames.set(player.id, null);
-        return; // The despawn event will handle the UI update and message
+        return;
       }
 
       if (selectedItem) {
         // Remove any currently held item
         if (currentHeldItem) {
-          // Don't send message here, it will be sent by the despawn event
           currentHeldItem.despawn();
           playerHeldItemNames.set(player.id, null);
         }
 
-        // Create new item
-        const itemEntity = createSeedItem();
+        // Find plant info for the selected item
+        const plantInfo = Object.values(PLANT_TYPES).find(
+          (info): info is PlantType => info.name === selectedItem
+        );
 
-        // Get player's position and rotation
-        const playerPos = playerEntity.position;
-        const playerRot = playerEntity.rotation;
+        if (plantInfo) {
+          // Create new item with the plant's model
+          const itemEntity = new Entity({
+            modelUri: plantInfo.plantModel,
+            modelScale: plantInfo.plantScale * 0.75,
+            // Note: Opacity will be handled in the UI layer
+            rigidBodyOptions: {
+              enabled: false,
+            },
+          });
 
-        // Calculate hand position
-        const handOffset = {
-          x: 0, // Center
-          y: -0.5, // At hand height
-          z: -0.5, // In front of player
-        };
+          // Get player's position and rotation
+          const playerPos = playerEntity.position;
+          const playerRot = playerEntity.rotation;
 
-        const spawnPos = {
-          x: playerPos.x + handOffset.x,
-          y: playerPos.y + handOffset.y,
-          z: playerPos.z + handOffset.z,
-        };
+          // Calculate hand position
+          const handOffset = {
+            x: 0,
+            y: -0.5,
+            z: -0.5,
+          };
 
-        itemEntity.spawn(world, spawnPos);
+          const spawnPos = {
+            x: playerPos.x + handOffset.x,
+            y: playerPos.y + handOffset.y,
+            z: playerPos.z + handOffset.z,
+          };
 
-        // Store the item entity and update held item name
-        playerHeldItems.set(player.id, itemEntity);
-        playerHeldItemNames.set(player.id, selectedItem);
+          itemEntity.spawn(world, spawnPos);
 
-        // Set as child of player immediately
-        itemEntity.setParent(playerEntity);
+          // Store the item entity and update held item name
+          playerHeldItems.set(player.id, itemEntity);
+          playerHeldItemNames.set(player.id, selectedItem);
 
-        // Set position relative to parent
-        itemEntity.setPosition(handOffset);
+          // Set as child of player immediately
+          itemEntity.setParent(playerEntity);
 
-        // Update inventory UI to show held item
-        updatePlayerInventoryUI(player, world, index);
+          // Set position relative to parent
+          itemEntity.setPosition(handOffset);
 
-        // Notify player
-        world.chatManager.sendPlayerMessage(player, `Holding ${selectedItem}`);
+          // Update inventory UI to show held item
+          updatePlayerInventoryUI(player, world, index);
 
-        // Add event listener for when item is despawned
-        itemEntity.on(EntityEvent.DESPAWN, () => {
-          // Only send message if this is the currently held item
-          if (playerHeldItems.get(player.id) === itemEntity) {
-            // Update inventory UI to show item is no longer held
-            updatePlayerInventoryUI(player, world, null);
-            world.chatManager.sendPlayerMessage(
-              player,
-              `Stopped holding ${selectedItem}`
-            );
-            // Clear the held item references
-            playerHeldItems.set(player.id, null);
-            playerHeldItemNames.set(player.id, null);
-          }
-        });
+          // Notify player
+          world.chatManager.sendPlayerMessage(
+            player,
+            `Holding ${selectedItem}`
+          );
+
+          // Add event listener for when item is despawned
+          itemEntity.on(EntityEvent.DESPAWN, () => {
+            const currentHeld = playerHeldItems.get(player.id);
+            if (currentHeld === itemEntity) {
+              updatePlayerInventoryUI(player, world, null);
+              world.chatManager.sendPlayerMessage(
+                player,
+                `Stopped holding ${selectedItem}`
+              );
+              playerHeldItems.set(player.id, null);
+              playerHeldItemNames.set(player.id, null);
+            }
+          });
+        }
       } else {
         world.chatManager.sendPlayerMessage(player, "No item in that slot!");
       }

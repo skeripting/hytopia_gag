@@ -43,6 +43,12 @@ and also configure additional buttons for mobile compatibility.
     } else if (data.type === "raycast_update") {
       const overlay = document.getElementById("plant-seed-overlay");
       const text = document.getElementById("plant-seed-text");
+      const plantProgressOverlay = document.getElementById(
+        "plant-progress-overlay"
+      );
+      const plantProgressText = document.getElementById("plant-progress-text");
+      const plantProgressBar = document.getElementById("plant-progress-bar");
+      const plantProgressFill = document.getElementById("plant-progress-fill");
 
       if (!overlay || !text) {
         console.error("UI: Missing overlay elements!");
@@ -57,6 +63,49 @@ and also configure additional buttons for mobile compatibility.
         overlay.classList.add("visible");
       } else {
         overlay.classList.remove("visible");
+      }
+
+      // Handle plant progress display
+      if (data.nearbyPlant) {
+        console.log(
+          "UI: Showing plant progress for:",
+          data.nearbyPlant.name,
+          "Progress:",
+          data.plantProgress
+        );
+
+        if (
+          plantProgressOverlay &&
+          plantProgressText &&
+          plantProgressBar &&
+          plantProgressFill
+        ) {
+          const plantName = data.nearbyPlant.name.replace(" Seed", "");
+          const progress = Math.round(data.plantProgress);
+
+          plantProgressText.textContent = `${plantName} - ${progress}%`;
+          plantProgressFill.style.width = `${progress}%`;
+
+          // Change color based on growth stage
+          if (data.isPlantFullyGrown) {
+            plantProgressFill.style.backgroundColor = "#4CAF50"; // Green for fully grown
+            plantProgressText.textContent = `${plantName} - Ready to harvest! (Press E)`;
+            plantProgressOverlay.classList.add("harvest-ready");
+          } else if (progress > 50) {
+            plantProgressFill.style.backgroundColor = "#FF9800"; // Orange for growing
+            plantProgressOverlay.classList.remove("harvest-ready");
+          } else {
+            plantProgressFill.style.backgroundColor = "#2196F3"; // Blue for early growth
+            plantProgressOverlay.classList.remove("harvest-ready");
+          }
+
+          plantProgressOverlay.classList.add("visible");
+        }
+      } else {
+        if (plantProgressOverlay) {
+          plantProgressOverlay.classList.remove("visible");
+          plantProgressOverlay.classList.remove("harvest-ready");
+        }
       }
     }
   });
@@ -109,6 +158,12 @@ and also configure additional buttons for mobile compatibility.
       if (slot) {
         hytopia.sendData({ type: "hold", index: index });
       }
+    }
+
+    // Handle E key for harvesting
+    if (e.key.toLowerCase() === "e") {
+      console.log("UI: E key pressed, attempting to harvest");
+      hytopia.sendData({ type: "harvest_plant" });
     }
   });
 
@@ -228,6 +283,16 @@ and also configure additional buttons for mobile compatibility.
 <!-- Add plant seed text overlay -->
 <div id="plant-seed-overlay" class="plant-seed-overlay">
   <span id="plant-seed-text">Plant Seed</span>
+</div>
+
+<!-- Add plant progress overlay -->
+<div id="plant-progress-overlay" class="plant-progress-overlay">
+  <div id="plant-progress-text" class="plant-progress-text">
+    Plant Name - 0%
+  </div>
+  <div id="plant-progress-bar" class="plant-progress-bar">
+    <div id="plant-progress-fill" class="plant-progress-fill"></div>
+  </div>
 </div>
 
 <style>
@@ -357,5 +422,69 @@ and also configure additional buttons for mobile compatibility.
 
   .plant-seed-overlay.clickable:hover {
     background-color: rgba(76, 175, 80, 0.9);
+  }
+
+  .plant-progress-overlay {
+    position: fixed;
+    top: 20%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    font-family: "Inter", sans-serif;
+    font-size: 14px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: 1000;
+    min-width: 200px;
+    text-align: center;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .plant-progress-overlay.visible {
+    opacity: 1;
+  }
+
+  .plant-progress-overlay.harvest-ready {
+    border-color: #4caf50;
+    box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0% {
+      box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+    }
+    50% {
+      box-shadow: 0 0 20px rgba(76, 175, 80, 0.8);
+    }
+    100% {
+      box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
+    }
+  }
+
+  .plant-progress-text {
+    margin-bottom: 8px;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+  }
+
+  .plant-progress-bar {
+    width: 100%;
+    height: 8px;
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .plant-progress-fill {
+    height: 100%;
+    background-color: #2196f3;
+    border-radius: 4px;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    width: 0%;
   }
 </style>
