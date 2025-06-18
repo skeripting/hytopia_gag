@@ -45,6 +45,8 @@ and also configure additional buttons for mobile compatibility.
     } else if (data.type === "sell_notification") {
       showSellNotification(data.plantsSold, data.totalEarnings);
       animateCashEarnings(data.totalEarnings);
+    } else if (data.type === "garden_claimed_notification") {
+      showGardenClaimedNotification();
     } else if (data.type === "raycast_update") {
       const overlay = document.getElementById("plant-seed-overlay");
       const text = document.getElementById("plant-seed-text");
@@ -68,6 +70,20 @@ and also configure additional buttons for mobile compatibility.
         overlay.classList.add("visible");
       } else {
         overlay.classList.remove("visible");
+      }
+
+      // Handle garden claim display
+      if (data.nearbyGarden && !data.nearbyGarden.isOwned) {
+        if (overlay && text) {
+          const gardenIndex = data.nearbyGarden.gardenIndex || 1;
+          text.textContent = `Claim Garden #${gardenIndex}`;
+          overlay.classList.add("visible");
+          overlay.classList.add("claim-garden");
+        }
+      } else {
+        if (overlay) {
+          overlay.classList.remove("claim-garden");
+        }
       }
 
       // Handle plant progress display
@@ -188,6 +204,23 @@ and also configure additional buttons for mobile compatibility.
     }
   }
 
+  function showGardenClaimedNotification() {
+    const notification = document.getElementById("garden-claimed-notification");
+    const notificationText = document.getElementById(
+      "garden-claimed-notification-text"
+    );
+
+    if (notification && notificationText) {
+      notificationText.textContent = "Garden Claimed!";
+      notification.classList.add("visible");
+
+      // Hide notification after 3 seconds
+      setTimeout(() => {
+        notification.classList.remove("visible");
+      }, 3000);
+    }
+  }
+
   // Handle number keys 1-9 to select inventory slots
   document.addEventListener("keydown", (e) => {
     const num = parseInt(e.key);
@@ -240,6 +273,9 @@ and also configure additional buttons for mobile compatibility.
         if (plantSeedOverlay.classList.contains("clickable")) {
           console.log("UI: Overlay is clickable, sending plant_seed event");
           hytopia.sendData({ type: "plant_seed" });
+        } else if (plantSeedOverlay.classList.contains("claim-garden")) {
+          console.log("UI: Claiming garden");
+          hytopia.sendData({ type: "claim_garden" });
         } else {
           console.log("UI: Overlay is not clickable, ignoring click");
         }
@@ -344,7 +380,17 @@ and also configure additional buttons for mobile compatibility.
 <!-- Add sell notification overlay -->
 <div id="sell-notification" class="sell-notification">
   <div id="sell-notification-text" class="sell-notification-text">
-    Sold 0 plants for 0 cash!
+    Sold 0 plants for $0!
+  </div>
+</div>
+
+<!-- Add garden claimed notification overlay -->
+<div id="garden-claimed-notification" class="garden-claimed-notification">
+  <div
+    id="garden-claimed-notification-text"
+    class="garden-claimed-notification-text"
+  >
+    Garden Claimed!
   </div>
 </div>
 
@@ -475,6 +521,24 @@ and also configure additional buttons for mobile compatibility.
 
   .plant-seed-overlay.clickable:hover {
     background-color: rgba(76, 175, 80, 0.9);
+  }
+
+  .plant-seed-overlay.claim-garden {
+    background-color: rgba(0, 0, 0, 0.8);
+    color: #ffd700;
+    border: 2px solid #ffd700;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    font-weight: bold;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+    min-width: 120px;
+    text-align: center;
+    transition: all 0.3s ease;
+  }
+
+  .plant-seed-overlay.claim-garden:hover {
+    background-color: rgba(0, 0, 0, 0.9);
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.8);
+    transform: scale(1.05);
   }
 
   .plant-progress-overlay {
@@ -611,6 +675,52 @@ and also configure additional buttons for mobile compatibility.
   }
 
   @keyframes sellNotificationSlide {
+    0% {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-20px);
+    }
+    20% {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    80% {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(-50%) translateY(-20px);
+    }
+  }
+
+  .garden-claimed-notification {
+    position: fixed;
+    top: 33%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.9);
+    color: #ffa500;
+    padding: 15px 25px;
+    border-radius: 10px;
+    font-family: "Inter", sans-serif;
+    font-size: 20px;
+    font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+    border: 3px solid #ffa500;
+    box-shadow: 0 0 20px rgba(255, 165, 0, 0.5);
+    pointer-events: none;
+    opacity: 0;
+    transition: all 0.5s ease;
+    z-index: 2000;
+    text-align: center;
+  }
+
+  .garden-claimed-notification.visible {
+    opacity: 1;
+    animation: gardenClaimedSlide 3s ease-in-out;
+  }
+
+  @keyframes gardenClaimedSlide {
     0% {
       opacity: 0;
       transform: translateX(-50%) translateY(-20px);
