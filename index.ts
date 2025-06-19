@@ -48,11 +48,11 @@ const playerHeldItemNames = new Map<string, string | null>();
 const playerCash = new Map<string, number>();
 
 // Add garden ownership system
-const gardenOwnership = new Map<string, string>(); // gardenId -> playerId
-const playerGardens = new Map<string, string[]>(); // playerId -> gardenIds[]
+const gardenOwnership = new Map<string, string>(); // diamondPosition -> playerId
+const playerGardens = new Map<string, string[]>(); // playerId -> diamondPositions[]
 
 // Add garden indexing system
-const gardenIndices = new Map<string, number>(); // gardenId -> gardenIndex
+const gardenIndices = new Map<string, number>(); // diamondPosition -> gardenIndex
 let nextGardenIndex = 1; // Next available garden index
 
 // Add to the raycast data type
@@ -66,13 +66,12 @@ type RaycastData = {
   } | null;
   plantProgress: number;
   isPlantFullyGrown: boolean;
-  nearbyGarden: {
-    id: string;
+  nearbyDiamond: {
     position: { x: number; y: number; z: number };
     isOwned: boolean;
     ownerId: string | null;
     gardenOwnerDisplay: string | null;
-    gardenIndex: number | null; // Add garden index
+    gardenIndex: number | null;
   } | null;
 };
 
@@ -205,55 +204,33 @@ function lerp(start: number, end: number, t: number): number {
   return start + (end - start) * t;
 }
 
-// Helper function to generate garden ID from position
-function getGardenId(x: number, y: number, z: number): string {
-  return `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`;
+// Helper function to generate diamond position key
+function getDiamondKey(x: number, y: number, z: number): string {
+  return `${x},${y},${z}`;
 }
 
-// Helper function to check if a position is within a garden boundary
-function isWithinGarden(x: number, y: number, z: number): boolean {
-  // Define garden boundaries (you can adjust these based on your map)
-  // For now, let's assume gardens are 5x5 areas with wood perimeter
-  const gardenSize = 5;
-  const gardenSpacing = 10; // Space between gardens
-
-  // Check if position is within a garden grid
-  const gridX = Math.floor(x / gardenSpacing);
-  const gridZ = Math.floor(z / gardenSpacing);
-
-  // Check if position is within the garden area (not on the perimeter)
-  const localX = x % gardenSpacing;
-  const localZ = z % gardenSpacing;
-
-  return (
-    localX >= 1 &&
-    localX < gardenSize - 1 &&
-    localZ >= 1 &&
-    localZ < gardenSize - 1 &&
-    y >= 9 &&
-    y <= 11
-  ); // Garden height range
-}
-
-// Helper function to check if a position is within a claimed garden
-function getGardenOwnerForPosition(
+// Helper function to check if a position is near a claimed diamond
+function getDiamondOwnerForPosition(
   x: number,
   y: number,
   z: number
 ): string | null {
-  // Check all claimed gardens to see if this position is within any of them
-  for (const [gardenId, ownerId] of gardenOwnership.entries()) {
-    // Parse the garden bounds from the ID (format: "minX,maxX,minZ,maxZ,y")
-    const parts = gardenId.split(",");
-    if (parts.length === 5) {
-      const minX = parseInt(parts[0] || "0");
-      const maxX = parseInt(parts[1] || "0");
-      const minZ = parseInt(parts[2] || "0");
-      const maxZ = parseInt(parts[3] || "0");
-      const gardenY = parseInt(parts[4] || "0");
+  // Check all claimed diamonds to see if this position is within range
+  for (const [diamondKey, ownerId] of gardenOwnership.entries()) {
+    const parts = diamondKey.split(",");
+    if (parts.length === 3) {
+      const diamondX = parseInt(parts[0] || "0");
+      const diamondY = parseInt(parts[1] || "0");
+      const diamondZ = parseInt(parts[2] || "0");
 
-      // Check if position is within this garden's bounds
-      if (x >= minX && x <= maxX && z >= minZ && z <= maxZ && y === gardenY) {
+      // Check if position is within 5 blocks of the diamond
+      const distance = Math.sqrt(
+        Math.pow(x - diamondX, 2) +
+          Math.pow(y - diamondY, 2) +
+          Math.pow(z - diamondZ, 2)
+      );
+
+      if (distance <= 5) {
         return ownerId;
       }
     }
@@ -261,288 +238,19 @@ function getGardenOwnerForPosition(
   return null;
 }
 
-// Helper to find garden bounds and validate perimeter (perimeter-only, allow 3-block entrance on one side, do not check inside)
-function findGardenBoundsAndValidate(
-  world: any,
-  x: number,
-  y: number,
-  z: number
-): {
-  minX: number;
-  maxX: number;
-  minZ: number;
-  maxZ: number;
-  valid: boolean;
-} | null {
-  // Find the nearest rectangle of logs around (x, z) at height y
-  // Expand outwards until we hit logs in all four directions
-  let minX = x,
-    maxX = x,
-    minZ = z,
-    maxZ = z;
-  // Expand X-
-  while (world.chunkLattice.getBlockId({ x: minX - 1, y, z }) === 42) minX--;
-  // Expand X+
-  while (world.chunkLattice.getBlockId({ x: maxX + 1, y, z }) === 42) maxX++;
-  // Expand Z-
-  while (world.chunkLattice.getBlockId({ x, y, z: minZ - 1 }) === 42) minZ--;
-  // Expand Z+
-  while (world.chunkLattice.getBlockId({ x, y, z: maxZ + 1 }) === 42) maxZ++;
-
-  // Now check the perimeter
-  let entranceSides = 0;
-  function checkBorder(
-    getX: (i: number) => number,
-    getZ: (i: number) => number,
-    start: number,
-    end: number
-  ): boolean {
-    let gap = 0;
-    let maxGap = 0;
-    for (let i = start; i <= end; i++) {
-      const blockId = world.chunkLattice.getBlockId({
-        x: getX(i),
-        y,
-        z: getZ(i),
-      });
-      if (blockId !== 42) {
-        gap++;
-        maxGap = Math.max(maxGap, gap);
-      } else {
-        gap = 0;
-      }
-    }
-    if (maxGap > 0) entranceSides++;
-    return true;
+// Function to get or assign garden index
+function getOrAssignGardenIndex(diamondKey: string): number {
+  if (!gardenIndices.has(diamondKey)) {
+    gardenIndices.set(diamondKey, nextGardenIndex);
+    nextGardenIndex++;
   }
-  // Top border (minZ)
-  if (
-    !checkBorder(
-      (xi) => xi,
-      (_) => minZ,
-      minX,
-      maxX
-    )
-  )
-    return null;
-  // Bottom border (maxZ)
-  if (
-    !checkBorder(
-      (xi) => xi,
-      (_) => maxZ,
-      minX,
-      maxX
-    )
-  )
-    return null;
-  // Left border (minX)
-  if (
-    !checkBorder(
-      (_) => minX,
-      (zi) => zi,
-      minZ,
-      maxZ
-    )
-  )
-    return null;
-  // Right border (maxX)
-  if (
-    !checkBorder(
-      (_) => maxX,
-      (zi) => zi,
-      minZ,
-      maxZ
-    )
-  )
-    return null;
-  if (entranceSides !== 1) return null; // Only one side can have a gap
-  return { minX, maxX, minZ, maxZ, valid: true };
-}
-
-// Helper to get a unique garden ID from bounds
-function getGardenIdFromBounds(
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number,
-  y: number
-): string {
-  return `${minX},${maxX},${minZ},${maxZ},${y}`;
-}
-
-// Add garden boundary indicators
-const gardenBoundaryIndicators = new Map<string, Entity[]>(); // gardenId -> array of indicator entities
-
-// Function to create garden boundary indicators
-function createGardenBoundaryIndicators(
-  world: any,
-  gardenId: string,
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number,
-  y: number,
-  ownerId: string
-) {
-  // Remove existing indicators for this garden
-  const existingIndicators = gardenBoundaryIndicators.get(gardenId) || [];
-  existingIndicators.forEach((indicator) => indicator.despawn());
-
-  // Create new indicators
-  const indicators: Entity[] = [];
-
-  // Create corner indicators (small glowing blocks)
-  const cornerPositions = [
-    { x: minX, z: minZ },
-    { x: maxX, z: minZ },
-    { x: minX, z: maxZ },
-    { x: maxX, z: maxZ },
-  ];
-
-  cornerPositions.forEach((pos, index) => {
-    const indicator = new Entity({
-      modelUri: "models/items/stick.gltf", // Using stick as placeholder
-      modelScale: 0.3,
-      rigidBodyOptions: {
-        enabled: false,
-      },
-    });
-
-    indicator.spawn(world, { x: pos.x, y: y + 2.0, z: pos.z });
-    indicators.push(indicator);
-  });
-
-  // Create edge indicators (lines along the perimeter)
-  const edgeIndicators = createEdgeIndicators(
-    world,
-    minX,
-    maxX,
-    minZ,
-    maxZ,
-    y,
-    ownerId
-  );
-  indicators.push(...edgeIndicators);
-
-  gardenBoundaryIndicators.set(gardenId, indicators);
-}
-
-// Function to create edge indicators
-function createEdgeIndicators(
-  world: any,
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number,
-  y: number,
-  ownerId: string
-): Entity[] {
-  const indicators: Entity[] = [];
-
-  // Create indicators along the edges (every 2 blocks)
-  for (let x = minX; x <= maxX; x += 2) {
-    // Top edge
-    const topIndicator = new Entity({
-      modelUri: "models/items/stick.gltf",
-      modelScale: 0.2,
-      rigidBodyOptions: {
-        enabled: false,
-      },
-    });
-    topIndicator.spawn(world, { x: x, y: y + 1.8, z: minZ }); // Increased Y position from 0.3 to 1.8
-    indicators.push(topIndicator);
-
-    // Bottom edge
-    const bottomIndicator = new Entity({
-      modelUri: "models/items/stick.gltf",
-      modelScale: 0.2,
-      rigidBodyOptions: {
-        enabled: false,
-      },
-    });
-    bottomIndicator.spawn(world, { x: x, y: y + 1.8, z: maxZ }); // Increased Y position from 0.3 to 1.8
-    indicators.push(bottomIndicator);
-  }
-
-  for (let z = minZ; z <= maxZ; z += 2) {
-    // Left edge
-    const leftIndicator = new Entity({
-      modelUri: "models/items/stick.gltf",
-      modelScale: 0.2,
-      rigidBodyOptions: {
-        enabled: false,
-      },
-    });
-    leftIndicator.spawn(world, { x: minX, y: y + 1.8, z: z }); // Increased Y position from 0.3 to 1.8
-    indicators.push(leftIndicator);
-
-    // Right edge
-    const rightIndicator = new Entity({
-      modelUri: "models/items/stick.gltf",
-      modelScale: 0.2,
-      rigidBodyOptions: {
-        enabled: false,
-      },
-    });
-    rightIndicator.spawn(world, { x: maxX, y: y + 1.8, z: z }); // Increased Y position from 0.3 to 1.8
-    indicators.push(rightIndicator);
-  }
-
-  return indicators;
-}
-
-// Function to remove garden boundary indicators
-function removeGardenBoundaryIndicators(gardenId: string) {
-  const indicators = gardenBoundaryIndicators.get(gardenId) || [];
-  indicators.forEach((indicator) => indicator.despawn());
-  gardenBoundaryIndicators.delete(gardenId);
-}
-
-// Function to update garden boundary indicators for all players
-function updateGardenBoundaryIndicators(world: any) {
-  // Remove all existing indicators
-  gardenBoundaryIndicators.forEach((indicators, gardenId) => {
-    indicators.forEach((indicator) => indicator.despawn());
-  });
-  gardenBoundaryIndicators.clear();
-
-  // Recreate indicators for all claimed gardens
-  gardenOwnership.forEach((ownerId, gardenId) => {
-    const parts = gardenId.split(",");
-    if (parts.length === 5) {
-      const minX = parseInt(parts[0] || "0");
-      const maxX = parseInt(parts[1] || "0");
-      const minZ = parseInt(parts[2] || "0");
-      const maxZ = parseInt(parts[3] || "0");
-      const y = parseInt(parts[4] || "0");
-
-      createGardenBoundaryIndicators(
-        world,
-        gardenId,
-        minX,
-        maxX,
-        minZ,
-        maxZ,
-        y,
-        ownerId
-      );
-    }
-  });
+  return gardenIndices.get(diamondKey) || 1;
 }
 
 // Function to reset garden indices (useful for testing)
 function resetGardenIndices() {
   gardenIndices.clear();
   nextGardenIndex = 1;
-}
-
-// Function to get or assign garden index
-function getOrAssignGardenIndex(gardenId: string): number {
-  if (!gardenIndices.has(gardenId)) {
-    gardenIndices.set(gardenId, nextGardenIndex);
-    nextGardenIndex++;
-  }
-  return gardenIndices.get(gardenId) || 1;
 }
 
 /**
@@ -578,7 +286,7 @@ startServer((world) => {
   world.loadMap(worldMap);
 
   // Initialize garden boundary indicators for any existing claimed gardens
-  updateGardenBoundaryIndicators(world);
+  // updateGardenBoundaryIndicators(world);
 
   /**
    * Handle player joining the game. The PlayerEvent.JOINED_WORLD
@@ -650,10 +358,8 @@ startServer((world) => {
     skeletonSeedSeller.spawn(world, { x: -74, y: 10, z: 10 });
 
     const SHALE = 65; // corner marker block-id
-    const DIRT = 13; // centre marker block-id
+    const DIRT = 13;
     const LOG = 42;
-
-    const searchRadius = 100; // how far around the player we scan for corners
 
     function looksLikeGardenCorner(
       bx: number,
@@ -728,120 +434,44 @@ startServer((world) => {
       }
 
       // --- BEGIN GARDEN DETECTION v2 -------------------------------------------
-      let nearbyGarden: RaycastData["nearbyGarden"] = null;
-
-      let minGardenDistance = Infinity;
-
-      /* 1.  Gather all shale “corner” blocks within the search cube. */
-      const shaleCorners: { x: number; y: number; z: number }[] = [];
+      let nearbyDiamond: RaycastData["nearbyDiamond"] = null;
+      let minDiamondDistance = Infinity;
+      const searchRadius = 10; // how far around the player we scan for diamonds
+      // Scan for diamond blocks (ID = 11) near the player
       for (let x = -searchRadius; x <= searchRadius; x++) {
-        for (let y = -1; y <= 1; y++) {
+        for (let y = -2; y <= 2; y++) {
           for (let z = -searchRadius; z <= searchRadius; z++) {
             const bx = playerBlockX + x;
             const by = playerBlockY + y;
             const bz = playerBlockZ + z;
-            if (
-              world.chunkLattice.getBlockId({ x: bx, y: by, z: bz }) === SHALE
-            ) {
-              console.log("Shale found at:");
-              console.log(bx + ", " + by + ", " + bx);
-              if (looksLikeGardenCorner(bx, 1, bz)) {
-                shaleCorners.push({ x: bx, y: by, z: bz });
-              }
-            }
-          }
-        }
-      }
-
-      console.log(shaleCorners);
-
-      /* 2.  Split by Y-level (gardens must all sit on one flat layer). */
-      const cornersByY: Record<number, typeof shaleCorners> = {};
-      for (const c of shaleCorners) {
-        if (!cornersByY[c.y]) cornersByY[c.y] = [];
-        cornersByY[c.y]!.push(c);
-      }
-
-      /* 3.  For every distinct rectangle made from 4 shale blocks … */
-      for (const [yStr, corners] of Object.entries(cornersByY)) {
-        const y = Number(yStr);
-        if (corners.length < 4) continue;
-
-        for (let a = 0; a < corners.length; ++a)
-          for (let b = a + 1; b < corners.length; ++b)
-            for (let c = b + 1; c < corners.length; ++c)
-              for (let d = c + 1; d < corners.length; ++d) {
-                const pts = [corners[a], corners[b], corners[c], corners[d]];
-
-                // axis-aligned rectangle test
-                const xs = pts.map((p) => p.x);
-                const zs = pts.map((p) => p.z);
-                const minX = Math.min(...xs),
-                  maxX = Math.max(...xs);
-                const minZ = Math.min(...zs),
-                  maxZ = Math.max(...zs);
-
-                const expected = new Set([
-                  `${minX},${minZ}`,
-                  `${minX},${maxZ}`,
-                  `${maxX},${minZ}`,
-                  `${maxX},${maxZ}`,
-                ]);
-                const actual = new Set(pts.map((p) => `${p.x},${p.z}`));
-                if (
-                  expected.size !== actual.size ||
-                  ![...expected].every((k) => actual.has(k))
-                )
-                  continue; // not the four corners of an axis-aligned rectangle
-
-                /* 4.  Check for dirt block exactly (or nearly) at the geometric centre. */
-                const centreX = (minX + maxX) / 2;
-                const centreZ = (minZ + maxZ) / 2;
-
-                // integer block positions that could represent the centre (handles even widths)
-                const candidates: { x: number; z: number }[] = [];
-                const cx1 = Math.floor(centreX),
-                  cx2 = Math.ceil(centreX);
-                const cz1 = Math.floor(centreZ),
-                  cz2 = Math.ceil(centreZ);
-                for (const cx of [cx1, cx2])
-                  for (const cz of [cz1, cz2])
-                    candidates.push({ x: cx, z: cz });
-
-                const hasDirtCentre = candidates.some(
-                  ({ x, z }) =>
-                    world.chunkLattice.getBlockId({ x, y, z }) === DIRT
-                );
-
-                if (!hasDirtCentre) continue; // centre isn’t dirt - not a garden
-                /* 5.  Success!  Record the closest valid garden within 8 blocks. */
-                const dx = centreX + 0.5 - playerPos.x;
-                const dy = y + 0.5 - playerPos.y;
-                const dz = centreZ + 0.5 - playerPos.z;
-                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                if (dist > 15 || dist >= minGardenDistance) continue;
-
-                minGardenDistance = dist;
-                const gardenId = `${minX},${maxX},${minZ},${maxZ},${y}`;
-                const ownerId = gardenOwnership.get(gardenId) || null;
-                const gardenIdx = getOrAssignGardenIndex(gardenId);
-
-                nearbyGarden = {
-                  id: gardenId,
-                  position: { x: centreX, y, z: centreZ },
+            if (world.chunkLattice.getBlockId({ x: bx, y: by, z: bz }) === 11) {
+              // Calculate distance to diamond
+              const dx = bx + 0.5 - playerPos.x;
+              const dy = by + 0.5 - playerPos.y;
+              const dz = bz + 0.5 - playerPos.z;
+              const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+              if (dist <= 10 && dist < minDiamondDistance) {
+                minDiamondDistance = dist;
+                const diamondKey = getDiamondKey(bx, by, bz);
+                const ownerId = gardenOwnership.get(diamondKey) || null;
+                const gardenIdx = getOrAssignGardenIndex(diamondKey);
+                nearbyDiamond = {
+                  position: { x: bx + 0.5, y: by + 0.5, z: bz + 0.5 },
                   isOwned: ownerId !== null,
                   ownerId,
                   gardenOwnerDisplay: null,
                   gardenIndex: gardenIdx,
                 };
-
-                console.log("Garden detected!", {
-                  gardenId,
+                console.log("Diamond detected!", {
+                  diamondKey,
                   gardenIdx,
                   ownerId,
                   dist,
                 });
               }
+            }
+          }
+        }
       }
 
       growingSeeds.forEach((seed, id) => {
@@ -949,8 +579,8 @@ startServer((world) => {
 
       // Send update to UI with debug logging
       let gardenOwnerDisplay = null;
-      if (nearbyGarden && nearbyGarden.isOwned && nearbyGarden.ownerId) {
-        if (nearbyGarden.ownerId === player.id) {
+      if (nearbyDiamond && nearbyDiamond.isOwned && nearbyDiamond.ownerId) {
+        if (nearbyDiamond.ownerId === player.id) {
           gardenOwnerDisplay = "Your Garden";
         } else {
           // Try to get the owner's name using multiple methods
@@ -960,7 +590,7 @@ startServer((world) => {
           const wAny = world as any;
           if (typeof wAny.playerManager?.getPlayerById === "function") {
             const ownerPlayer = wAny.playerManager.getPlayerById(
-              nearbyGarden.ownerId
+              nearbyDiamond.ownerId
             );
             if (ownerPlayer && ownerPlayer.name) {
               ownerName = ownerPlayer.name;
@@ -969,7 +599,7 @@ startServer((world) => {
           // Method 2: Try using world.players array if available
           else if (Array.isArray(wAny.players)) {
             const ownerPlayer = wAny.players.find(
-              (p: any) => p.id === nearbyGarden.ownerId
+              (p: any) => p.id === nearbyDiamond.ownerId
             );
             if (ownerPlayer && ownerPlayer.name) {
               ownerName = ownerPlayer.name;
@@ -981,7 +611,7 @@ startServer((world) => {
               // Use the proper HYTOPIA SDK method to get player entities
               const playerEntities =
                 world.entityManager.getPlayerEntitiesByPlayer({
-                  id: nearbyGarden.ownerId,
+                  id: nearbyDiamond.ownerId,
                 } as any);
               if (playerEntities.length > 0) {
                 // Try to get the player name from the entity or use a fallback
@@ -990,7 +620,7 @@ startServer((world) => {
             } catch (e) {
               console.log(
                 "Could not find player name for owner:",
-                nearbyGarden.ownerId
+                nearbyDiamond.ownerId
               );
             }
           }
@@ -1005,8 +635,8 @@ startServer((world) => {
         nearbyPlant,
         plantProgress,
         isPlantFullyGrown,
-        nearbyGarden: nearbyGarden
-          ? { ...nearbyGarden, gardenOwnerDisplay }
+        nearbyDiamond: nearbyDiamond
+          ? { ...nearbyDiamond, gardenOwnerDisplay }
           : null,
       };
 
@@ -1029,13 +659,13 @@ startServer((world) => {
 
       // Check if we can claim garden (near unowned garden)
       const canClaimGarden =
-        raycastData?.nearbyGarden && !raycastData.nearbyGarden.isOwned;
+        raycastData?.nearbyDiamond && !raycastData.nearbyDiamond.isOwned;
 
       // make this only print if ml is true
       if (player.input.ml) {
         console.log("Server: Can plant:", canPlant);
         console.log("Server: Can claim garden:", canClaimGarden);
-        console.log("Server: Nearby garden:", raycastData?.nearbyGarden);
+        console.log("Server: Nearby garden:", raycastData?.nearbyDiamond);
         console.log(
           "Server: Garden ownership map:",
           Array.from(gardenOwnership.entries())
@@ -1046,36 +676,22 @@ startServer((world) => {
       if (player.input.ml && canClaimGarden) {
         console.log("Server: Claiming garden");
 
-        const garden = raycastData.nearbyGarden;
+        const garden = raycastData.nearbyDiamond;
         if (garden) {
           // Parse garden bounds from the ID
-          const parts = garden.id.split(",");
-          if (parts.length === 5) {
-            const minX = parseInt(parts[0] || "0");
-            const maxX = parseInt(parts[1] || "0");
-            const minZ = parseInt(parts[2] || "0");
-            const maxZ = parseInt(parts[3] || "0");
-            const y = parseInt(parts[4] || "0");
+          const parts = garden.position.x.toString().split(",");
+          if (parts.length === 3) {
+            const x = parseInt(parts[0] || "0");
+            const y = parseInt(parts[1] || "0");
+            const z = parseInt(parts[2] || "0");
 
             // Claim the garden
-            gardenOwnership.set(garden.id, player.id);
+            gardenOwnership.set(getDiamondKey(x, y, z), player.id);
 
             // Add garden to player's garden list
             const playerGardenList = playerGardens.get(player.id) || [];
-            playerGardenList.push(garden.id);
+            playerGardenList.push(getDiamondKey(x, y, z));
             playerGardens.set(player.id, playerGardenList);
-
-            // Create visual indicators for the garden
-            createGardenBoundaryIndicators(
-              world,
-              garden.id,
-              minX,
-              maxX,
-              minZ,
-              maxZ,
-              y,
-              player.id
-            );
 
             // Send garden claimed notification
             player.ui.sendData({
@@ -1102,7 +718,7 @@ startServer((world) => {
         if (raycastData?.closestDirtPos && heldItem) {
           // Check if this dirt is in an owned garden
           const dirtPos = raycastData.closestDirtPos;
-          const gardenOwner = getGardenOwnerForPosition(
+          const gardenOwner = getDiamondOwnerForPosition(
             dirtPos.x,
             dirtPos.y,
             dirtPos.z
@@ -1306,37 +922,23 @@ startServer((world) => {
         console.log("Server: Claiming garden from UI");
         const raycastData = playerRaycastData.get(player.id);
 
-        if (raycastData?.nearbyGarden && !raycastData.nearbyGarden.isOwned) {
-          const garden = raycastData.nearbyGarden;
+        if (raycastData?.nearbyDiamond && !raycastData.nearbyDiamond.isOwned) {
+          const garden = raycastData.nearbyDiamond;
 
           // Parse garden bounds from the ID
-          const parts = garden.id.split(",");
-          if (parts.length === 5) {
-            const minX = parseInt(parts[0] || "0");
-            const maxX = parseInt(parts[1] || "0");
-            const minZ = parseInt(parts[2] || "0");
-            const maxZ = parseInt(parts[3] || "0");
-            const y = parseInt(parts[4] || "0");
+          const parts = garden.position.x.toString().split(",");
+          if (parts.length === 3) {
+            const x = parseInt(parts[0] || "0");
+            const y = parseInt(parts[1] || "0");
+            const z = parseInt(parts[2] || "0");
 
             // Claim the garden
-            gardenOwnership.set(garden.id, player.id);
+            gardenOwnership.set(getDiamondKey(x, y, z), player.id);
 
             // Add garden to player's garden list
             const playerGardenList = playerGardens.get(player.id) || [];
-            playerGardenList.push(garden.id);
+            playerGardenList.push(getDiamondKey(x, y, z));
             playerGardens.set(player.id, playerGardenList);
-
-            // Create visual indicators for the garden
-            createGardenBoundaryIndicators(
-              world,
-              garden.id,
-              minX,
-              maxX,
-              minZ,
-              maxZ,
-              y,
-              player.id
-            );
 
             // Send garden claimed notification
             player.ui.sendData({
@@ -1376,7 +978,7 @@ startServer((world) => {
         ) {
           // Check if this dirt is in an owned garden
           const dirtPos = raycastData.closestDirtPos;
-          const gardenOwner = getGardenOwnerForPosition(
+          const gardenOwner = getDiamondOwnerForPosition(
             dirtPos.x,
             dirtPos.y,
             dirtPos.z
@@ -2063,38 +1665,6 @@ startServer((world) => {
     world.entityManager.getPlayerEntitiesByPlayer(player).forEach((entity) => {
       entity.applyImpulse({ x: 0, y: 0, z: -20 });
     });
-  });
-
-  // Add command to toggle garden boundary indicators
-  world.chatManager.registerCommand("/garden-indicators", (player) => {
-    const args = (player.input as any).text?.split(" ") || [];
-    const action = args[1]?.toLowerCase();
-
-    if (action === "show" || action === "on") {
-      updateGardenBoundaryIndicators(world);
-      world.chatManager.sendPlayerMessage(
-        player,
-        "Garden boundary indicators enabled!",
-        "00FF00"
-      );
-    } else if (action === "hide" || action === "off") {
-      // Remove all garden boundary indicators
-      gardenBoundaryIndicators.forEach((indicators, gardenId) => {
-        indicators.forEach((indicator) => indicator.despawn());
-      });
-      gardenBoundaryIndicators.clear();
-      world.chatManager.sendPlayerMessage(
-        player,
-        "Garden boundary indicators disabled!",
-        "FF0000"
-      );
-    } else {
-      world.chatManager.sendPlayerMessage(
-        player,
-        "Usage: /garden-indicators [show|hide|on|off]",
-        "FFFF00"
-      );
-    }
   });
 
   // Add command to reset garden indices (for testing)
