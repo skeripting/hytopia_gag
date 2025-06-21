@@ -75,6 +75,7 @@ and also configure additional buttons for mobile compatibility.
       // Update canPlant flag based on conditions
       let canPlant = data.lookingAtDirt && data.heldItem?.includes("Seed");
       let canClaimGarden = data.nearbyDiamond && !data.nearbyDiamond.isOwned;
+      let isOwnedGarden = data.nearbyDiamond && data.nearbyDiamond.isOwned;
 
       if (canPlant) {
         text.textContent = `Plant ${data.heldItem}`;
@@ -86,6 +87,14 @@ and also configure additional buttons for mobile compatibility.
         overlay.classList.add("visible");
         overlay.classList.add("claim-garden");
         overlay.classList.add("clickable");
+      } else if (isOwnedGarden) {
+        // Show garden ownership info when near an owned garden
+        const gardenOwnerDisplay =
+          data.nearbyDiamond.gardenOwnerDisplay || "Player's Garden";
+        text.textContent = gardenOwnerDisplay;
+        overlay.classList.add("visible");
+        overlay.classList.remove("clickable");
+        overlay.classList.remove("claim-garden");
       } else {
         overlay.classList.remove("visible");
         overlay.classList.remove("clickable");
