@@ -55,6 +55,12 @@ const playerGardens = new Map<string, string[]>(); // playerId -> diamondPositio
 const gardenIndices = new Map<string, number>(); // diamondPosition -> gardenIndex
 let nextGardenIndex = 1; // Next available garden index
 
+// Add tracking for fully grown plants to prevent duplicate harvesting
+const fullyGrownPlants = new Map<string, Entity>(); // plantPosition -> plantEntity
+
+// Add player names tracking for garden ownership display
+const playerNames = new Map<string, string>(); // playerId -> playerName
+
 // Add to the raycast data type
 type RaycastData = {
   lookingAtDirt: boolean;
@@ -120,7 +126,7 @@ const PLANT_TYPES: PlantTypes = {
     seedScale: 0.3,
     plantScale: 1.2,
     growthTime: 4000, // 4 seconds
-    finalHeight: 0.5,
+    finalHeight: 1.2, // Increased from 0.5 to 1.2 for better visibility
     color: "FFA500", // Orange
     emoji: "🥕",
     cost: 10, // 10 cash
@@ -133,7 +139,7 @@ const PLANT_TYPES: PlantTypes = {
     seedScale: 0.3,
     plantScale: 1.5,
     growthTime: 30000, // 30 seconds
-    finalHeight: 0.3,
+    finalHeight: 0.8, // Increased from 0.3 to 0.8 for better visibility
     color: "00FF00", // Green
     emoji: "🍈",
     cost: 25, // 25 cash
@@ -146,7 +152,7 @@ const PLANT_TYPES: PlantTypes = {
     seedScale: 0.3,
     plantScale: 0.8,
     growthTime: 60000, // 60 seconds
-    finalHeight: 0.6,
+    finalHeight: 1.0, // Increased from 0.6 to 1.0 for better visibility
     color: "8B4513", // Brown
     emoji: "🥔",
     cost: 15, // 15 cash
@@ -223,14 +229,14 @@ function getDiamondOwnerForPosition(
       const diamondY = parseInt(parts[1] || "0");
       const diamondZ = parseInt(parts[2] || "0");
 
-      // Check if position is within 5 blocks of the diamond
+      // Check if position is within 15 blocks of the diamond (much larger garden area)
       const distance = Math.sqrt(
         Math.pow(x - diamondX, 2) +
           Math.pow(y - diamondY, 2) +
           Math.pow(z - diamondZ, 2)
       );
 
-      if (distance <= 5) {
+      if (distance <= 15) {
         return ownerId;
       }
     }
@@ -309,6 +315,9 @@ startServer((world) => {
     // Initialize player's cash
     playerCash.set(player.id, 10);
 
+    // Store player's name for garden ownership display
+    playerNames.set(player.id, "Player"); // We'll update this with a better method later
+
     const playerEntity = new DefaultPlayerEntity({
       player,
       name: "Player",
@@ -343,37 +352,6 @@ startServer((world) => {
       player,
       "Press \\ to enter or exit debug view."
     );
-
-    // Trying to spawn a skeleton entity
-    const skeletonSeedSeller = new Entity({
-      modelUri: "models/npcs/skeleton.gltf",
-      modelLoopedAnimations: ["idle"],
-      modelScale: 0.8,
-      rigidBodyOptions: {},
-    });
-
-    // We need to make the entity rotate 90 degrees around the Y axis
-    skeletonSeedSeller.setRotation({ x: 0, y: -Math.PI / 2, z: 0, w: 1 });
-    // Just like the player entity, we can spawn the skeleton entity
-    skeletonSeedSeller.spawn(world, { x: -74, y: 10, z: 10 });
-
-    const SHALE = 65; // corner marker block-id
-    const DIRT = 13;
-    const LOG = 42;
-
-    function looksLikeGardenCorner(
-      bx: number,
-      by: number,
-      bz: number
-    ): boolean {
-      const radius = 10;
-      // quick scan inwards → (+X) and (+Z) for DIRT
-      for (let dx = 1; dx <= radius; dx++) {
-        if (world.chunkLattice.getBlockId({ x: bx + dx, y: by, z: bz }) === LOG)
-          return true;
-      }
-      return false;
-    }
 
     // Update the dirt check interval to ensure progress data is being sent
     const dirtCheckInterval = setInterval(() => {
@@ -462,12 +440,6 @@ startServer((world) => {
                   gardenOwnerDisplay: null,
                   gardenIndex: gardenIdx,
                 };
-                console.log("Diamond detected!", {
-                  diamondKey,
-                  gardenIdx,
-                  ownerId,
-                  dist,
-                });
               }
             }
           }
@@ -583,48 +555,8 @@ startServer((world) => {
         if (nearbyDiamond.ownerId === player.id) {
           gardenOwnerDisplay = "Your Garden";
         } else {
-          // Try to get the owner's name using multiple methods
-          let ownerName = "Player";
-
-          // Method 1: Try using world.playerManager if available
-          const wAny = world as any;
-          if (typeof wAny.playerManager?.getPlayerById === "function") {
-            const ownerPlayer = wAny.playerManager.getPlayerById(
-              nearbyDiamond.ownerId
-            );
-            if (ownerPlayer && ownerPlayer.name) {
-              ownerName = ownerPlayer.name;
-            }
-          }
-          // Method 2: Try using world.players array if available
-          else if (Array.isArray(wAny.players)) {
-            const ownerPlayer = wAny.players.find(
-              (p: any) => p.id === nearbyDiamond.ownerId
-            );
-            if (ownerPlayer && ownerPlayer.name) {
-              ownerName = ownerPlayer.name;
-            }
-          }
-          // Method 3: Try using entityManager to find player entities
-          else {
-            try {
-              // Use the proper HYTOPIA SDK method to get player entities
-              const playerEntities =
-                world.entityManager.getPlayerEntitiesByPlayer({
-                  id: nearbyDiamond.ownerId,
-                } as any);
-              if (playerEntities.length > 0) {
-                // Try to get the player name from the entity or use a fallback
-                ownerName = "Player"; // Fallback name
-              }
-            } catch (e) {
-              console.log(
-                "Could not find player name for owner:",
-                nearbyDiamond.ownerId
-              );
-            }
-          }
-
+          // Get the owner's name from our player names map
+          const ownerName = playerNames.get(nearbyDiamond.ownerId) || "Player";
           gardenOwnerDisplay = `${ownerName}'s Garden`;
         }
       }
@@ -676,38 +608,46 @@ startServer((world) => {
       if (player.input.ml && canClaimGarden) {
         console.log("Server: Claiming garden");
 
+        // Check if player already owns a garden
+        const playerGardenList = playerGardens.get(player.id) || [];
+        if (playerGardenList.length > 0) {
+          world.chatManager.sendPlayerMessage(
+            player,
+            "You already own a garden! You can only have one garden at a time.",
+            "FF0000"
+          );
+          player.input.ml = false;
+          return;
+        }
+
         const garden = raycastData.nearbyDiamond;
         if (garden) {
-          // Parse garden bounds from the ID
-          const parts = garden.position.x.toString().split(",");
-          if (parts.length === 3) {
-            const x = parseInt(parts[0] || "0");
-            const y = parseInt(parts[1] || "0");
-            const z = parseInt(parts[2] || "0");
+          // Use the garden position directly
+          const x = Math.floor(garden.position.x);
+          const y = Math.floor(garden.position.y);
+          const z = Math.floor(garden.position.z);
 
-            // Claim the garden
-            gardenOwnership.set(getDiamondKey(x, y, z), player.id);
+          // Claim the garden
+          gardenOwnership.set(getDiamondKey(x, y, z), player.id);
 
-            // Add garden to player's garden list
-            const playerGardenList = playerGardens.get(player.id) || [];
-            playerGardenList.push(getDiamondKey(x, y, z));
-            playerGardens.set(player.id, playerGardenList);
+          // Add garden to player's garden list
+          playerGardenList.push(getDiamondKey(x, y, z));
+          playerGardens.set(player.id, playerGardenList);
 
-            // Send garden claimed notification
-            player.ui.sendData({
-              type: "garden_claimed_notification",
-            });
+          // Send garden claimed notification
+          player.ui.sendData({
+            type: "garden_claimed_notification",
+          });
 
-            // Notify player
-            world.chatManager.sendPlayerMessage(
-              player,
-              "Garden Claimed! You can now plant seeds here.",
-              "00FF00"
-            );
+          // Notify player
+          world.chatManager.sendPlayerMessage(
+            player,
+            "Garden Claimed! You can now plant seeds here.",
+            "00FF00"
+          );
 
-            // Cancel the input so we don't claim multiple times
-            player.input.ml = false;
-          }
+          // Cancel the input so we don't claim multiple times
+          player.input.ml = false;
         }
       }
       // If left mouse is pressed and we can plant
@@ -724,7 +664,16 @@ startServer((world) => {
             dirtPos.z
           );
 
+          console.log("Garden ownership check (mouse input):", {
+            dirtPosition: dirtPos,
+            gardenOwner: gardenOwner,
+            playerId: player.id,
+            isOwner: gardenOwner === player.id,
+            allGardenOwnership: Array.from(gardenOwnership.entries()),
+          });
+
           if (!gardenOwner) {
+            console.log("Garden owner:");
             world.chatManager.sendPlayerMessage(
               player,
               "You need to claim this garden first before planting!",
@@ -747,7 +696,7 @@ startServer((world) => {
           // Create a seed entity at the dirt position
           const plantPos = {
             x: dirtPos.x + 0.5, // Center on the block
-            y: dirtPos.y + 0.1, // Slightly above the dirt
+            y: dirtPos.y + 0.3, // Increased from 0.1 to 0.3 for better visibility
             z: dirtPos.z + 0.5, // Center on the block
           };
 
@@ -869,6 +818,10 @@ startServer((world) => {
           });
           plant.setRotation(finalRotation);
 
+          // Track this fully grown plant
+          const plantKey = `${seed.plantPos.x},${seed.plantPos.y},${seed.plantPos.z}`;
+          fullyGrownPlants.set(plantKey, plant);
+
           // Add a small bounce animation when fully grown
           const originalY = seed.endY;
           plant.setPosition({ ...seed.plantPos, y: originalY + 0.2 });
@@ -923,35 +876,42 @@ startServer((world) => {
         const raycastData = playerRaycastData.get(player.id);
 
         if (raycastData?.nearbyDiamond && !raycastData.nearbyDiamond.isOwned) {
-          const garden = raycastData.nearbyDiamond;
-
-          // Parse garden bounds from the ID
-          const parts = garden.position.x.toString().split(",");
-          if (parts.length === 3) {
-            const x = parseInt(parts[0] || "0");
-            const y = parseInt(parts[1] || "0");
-            const z = parseInt(parts[2] || "0");
-
-            // Claim the garden
-            gardenOwnership.set(getDiamondKey(x, y, z), player.id);
-
-            // Add garden to player's garden list
-            const playerGardenList = playerGardens.get(player.id) || [];
-            playerGardenList.push(getDiamondKey(x, y, z));
-            playerGardens.set(player.id, playerGardenList);
-
-            // Send garden claimed notification
-            player.ui.sendData({
-              type: "garden_claimed_notification",
-            });
-
-            // Notify player
+          // Check if player already owns a garden
+          const playerGardenList = playerGardens.get(player.id) || [];
+          if (playerGardenList.length > 0) {
             world.chatManager.sendPlayerMessage(
               player,
-              "Garden Claimed! You can now plant seeds here.",
-              "00FF00"
+              "You already own a garden! You can only have one garden at a time.",
+              "FF0000"
             );
+            return;
           }
+
+          const garden = raycastData.nearbyDiamond;
+
+          // Use the garden position directly
+          const x = Math.floor(garden.position.x);
+          const y = Math.floor(garden.position.y);
+          const z = Math.floor(garden.position.z);
+
+          // Claim the garden
+          gardenOwnership.set(getDiamondKey(x, y, z), player.id);
+
+          // Add garden to player's garden list
+          playerGardenList.push(getDiamondKey(x, y, z));
+          playerGardens.set(player.id, playerGardenList);
+
+          // Send garden claimed notification
+          player.ui.sendData({
+            type: "garden_claimed_notification",
+          });
+
+          // Notify player
+          world.chatManager.sendPlayerMessage(
+            player,
+            "Garden Claimed! You can now plant seeds here.",
+            "00FF00"
+          );
         } else {
           world.chatManager.sendPlayerMessage(
             player,
@@ -984,6 +944,14 @@ startServer((world) => {
             dirtPos.z
           );
 
+          console.log("Garden ownership check (mouse input):", {
+            dirtPosition: dirtPos,
+            gardenOwner: gardenOwner,
+            playerId: player.id,
+            isOwner: gardenOwner === player.id,
+            allGardenOwnership: Array.from(gardenOwnership.entries()),
+          });
+
           if (!gardenOwner) {
             world.chatManager.sendPlayerMessage(
               player,
@@ -1005,7 +973,7 @@ startServer((world) => {
           // Create a seed entity at the dirt position
           const plantPos = {
             x: dirtPos.x + 0.5, // Center on the block
-            y: dirtPos.y + 0.1, // Slightly above the dirt
+            y: dirtPos.y + 0.3, // Increased from 0.1 to 0.3 for better visibility
             z: dirtPos.z + 0.5, // Center on the block
           };
 
@@ -1171,34 +1139,25 @@ startServer((world) => {
             "Server: No growing seed found, checking for fully grown plant entity"
           ); // Debug log
 
-          // Find the plant entity at the nearby plant position
-          const allEntities = world.entityManager.getAllEntities();
-          const plantEntity = allEntities.find((entity) => {
-            const entityPos = entity.position;
-            const dx = entityPos.x - raycastData.nearbyPlant!.position.x;
-            const dy = entityPos.y - raycastData.nearbyPlant!.position.y;
-            const dz = entityPos.z - raycastData.nearbyPlant!.position.z;
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            return distance < 0.1; // Use a small threshold for position matching
-          });
+          // First check if this plant is already being harvested (in fullyGrownPlants map)
+          const plantKey = `${raycastData.nearbyPlant.position.x},${raycastData.nearbyPlant.position.y},${raycastData.nearbyPlant.position.z}`;
+          const trackedPlant = fullyGrownPlants.get(plantKey);
 
-          if (plantEntity) {
-            console.log("Server: Found plant entity to harvest"); // Debug log
+          if (trackedPlant) {
+            console.log("Server: Found tracked plant to harvest"); // Debug log
 
             // Find the plant info based on the entity's model
-            const entityModel = plantEntity.modelUri;
+            const entityModel = trackedPlant.modelUri;
             const plantInfo = Object.values(PLANT_TYPES).find(
               (info): info is PlantType => info.plantModel === entityModel
             );
 
             if (plantInfo) {
-              console.log(
-                "Server: Harvesting fully grown plant:",
-                plantInfo.name
-              ); // Debug log
+              console.log("Server: Harvesting tracked plant:", plantInfo.name); // Debug log
 
-              // Remove the plant entity
-              plantEntity.despawn();
+              // Remove the plant entity and untrack it
+              trackedPlant.despawn();
+              fullyGrownPlants.delete(plantKey);
 
               // Add harvested item to inventory
               const inventory = playerInventories.get(player.id) || [];
@@ -1236,7 +1195,7 @@ startServer((world) => {
               }, 1000);
             } else {
               console.log(
-                "Server: Plant info not found for entity model:",
+                "Server: Plant info not found for tracked plant model:",
                 entityModel
               ); // Debug log
               world.chatManager.sendPlayerMessage(
@@ -1246,12 +1205,88 @@ startServer((world) => {
               );
             }
           } else {
-            console.log("Server: No plant entity found at position"); // Debug log
-            world.chatManager.sendPlayerMessage(
-              player,
-              "No plant found to harvest!",
-              "FF0000"
-            );
+            // Fallback: Find the plant entity at the nearby plant position
+            const allEntities = world.entityManager.getAllEntities();
+            const plantEntity = allEntities.find((entity) => {
+              const entityPos = entity.position;
+              const dx = entityPos.x - raycastData.nearbyPlant!.position.x;
+              const dy = entityPos.y - raycastData.nearbyPlant!.position.y;
+              const dz = entityPos.z - raycastData.nearbyPlant!.position.z;
+              const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+              return distance < 0.1; // Use a small threshold for position matching
+            });
+
+            if (plantEntity) {
+              console.log("Server: Found untracked plant entity to harvest"); // Debug log
+
+              // Find the plant info based on the entity's model
+              const entityModel = plantEntity.modelUri;
+              const plantInfo = Object.values(PLANT_TYPES).find(
+                (info): info is PlantType => info.plantModel === entityModel
+              );
+
+              if (plantInfo) {
+                console.log(
+                  "Server: Harvesting untracked plant:",
+                  plantInfo.name
+                ); // Debug log
+
+                // Remove the plant entity
+                plantEntity.despawn();
+
+                // Add harvested item to inventory
+                const inventory = playerInventories.get(player.id) || [];
+                const harvestedItem = plantInfo.name.replace(" Seed", "");
+                inventory.push(harvestedItem);
+                playerInventories.set(player.id, inventory);
+
+                // Update inventory UI
+                updatePlayerInventoryUI(player, world);
+
+                // Notify player with a more exciting message
+                world.chatManager.sendPlayerMessage(
+                  player,
+                  `✨ Harvested a ${harvestedItem}! ${plantInfo.emoji}`,
+                  plantInfo.color
+                );
+
+                // Add a small animation effect
+                const harvestEffect = new Entity({
+                  modelUri: plantInfo.plantModel,
+                  modelScale: plantInfo.plantScale * 0.5,
+                  rigidBodyOptions: {
+                    enabled: false,
+                  },
+                });
+
+                harvestEffect.spawn(world, {
+                  ...raycastData.nearbyPlant.position,
+                  y: raycastData.nearbyPlant.position.y + 0.5,
+                });
+
+                // Make the harvested item float up and fade out
+                setTimeout(() => {
+                  harvestEffect.despawn();
+                }, 1000);
+              } else {
+                console.log(
+                  "Server: Plant info not found for entity model:",
+                  entityModel
+                ); // Debug log
+                world.chatManager.sendPlayerMessage(
+                  player,
+                  "Unknown plant type!",
+                  "FF0000"
+                );
+              }
+            } else {
+              console.log("Server: No plant entity found at position"); // Debug log
+              world.chatManager.sendPlayerMessage(
+                player,
+                "No plant found to harvest!",
+                "FF0000"
+              );
+            }
           }
         }
       }
@@ -1389,6 +1424,11 @@ startServer((world) => {
       playerRaycastData.delete(player.id);
       playerHeldItemNames.delete(player.id);
       playerCash.delete(player.id);
+      playerNames.delete(player.id);
+
+      // Clean up any fully grown plants that might be orphaned
+      // This is a simple cleanup - in a more complex system you might want to track ownership
+      // Note: We'll let the garbage collector handle entity cleanup for now
     });
   });
 
@@ -1677,6 +1717,185 @@ startServer((world) => {
     );
   });
 
+  // Add debug command to show all claimed gardens
+  world.chatManager.registerCommand("/gardens", (player) => {
+    if (gardenOwnership.size === 0) {
+      world.chatManager.sendPlayerMessage(
+        player,
+        "No gardens are currently claimed.",
+        "FFFF00"
+      );
+      return;
+    }
+
+    world.chatManager.sendPlayerMessage(
+      player,
+      `Found ${gardenOwnership.size} claimed gardens:`,
+      "FFFF00"
+    );
+
+    gardenOwnership.forEach((ownerId, diamondKey) => {
+      const parts = diamondKey.split(",");
+      if (parts.length === 3) {
+        const x = parseInt(parts[0] || "0");
+        const y = parseInt(parts[1] || "0");
+        const z = parseInt(parts[2] || "0");
+        const gardenIndex = getOrAssignGardenIndex(diamondKey);
+
+        world.chatManager.sendPlayerMessage(
+          player,
+          `Garden #${gardenIndex}: Diamond at (${x}, ${y}, ${z}) - Owner: ${ownerId}`,
+          "FFFF00"
+        );
+      }
+    });
+  });
+
+  // Add comprehensive help command
+  world.chatManager.registerCommand("/help", (player) => {
+    world.chatManager.sendPlayerMessage(
+      player,
+      "🌱 Grow a Garden - Available Commands:",
+      "00FF00"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      "FFFFFF"
+    );
+
+    // Economy commands
+    world.chatManager.sendPlayerMessage(
+      player,
+      "💰 Economy Commands:",
+      "FFD700"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /buy <seed> - Buy seeds (carrot, melon, potato, cookie)",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /sell - Sell all harvested plants for cash",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /cash - Check your current cash balance",
+      "FFFFFF"
+    );
+
+    // Inventory commands
+    world.chatManager.sendPlayerMessage(
+      player,
+      "🎒 Inventory Commands:",
+      "FFD700"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /inventory - Show your current inventory",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /hold <slot> - Hold an item from your inventory (0-8)",
+      "FFFFFF"
+    );
+
+    // Garden commands
+    world.chatManager.sendPlayerMessage(
+      player,
+      "🏡 Garden Commands:",
+      "FFD700"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /gardens - Show all claimed gardens and their locations",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /abandon-garden - Abandon your current garden to claim a new one",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /reset-garden-indices - Reset garden numbering (for testing)",
+      "FFFFFF"
+    );
+
+    // Player commands
+    world.chatManager.sendPlayerMessage(
+      player,
+      "👤 Player Commands:",
+      "FFD700"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /name <your name> - Set your display name for garden ownership",
+      "FFFFFF"
+    );
+
+    // Fun commands
+    world.chatManager.sendPlayerMessage(player, "🎮 Fun Commands:", "FFD700");
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  /rocket - Launch yourself into the air!",
+      "FFFFFF"
+    );
+
+    // Gameplay tips
+    world.chatManager.sendPlayerMessage(player, "💡 Gameplay Tips:", "FFD700");
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Find diamond blocks to claim gardens",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Plant seeds on dirt blocks in your claimed garden",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Harvest fully grown plants with E key",
+      "FFFFFF"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Use number keys 1-9 to quickly select inventory slots",
+      "FFFFFF"
+    );
+
+    // Seed information
+    world.chatManager.sendPlayerMessage(
+      player,
+      "🌱 Available Seeds:",
+      "FFD700"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Carrot Seed: $10, grows in 4s, sells for $15",
+      "FFA500"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Melon Seed: $25, grows in 30s, sells for $30",
+      "00FF00"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Potato Seed: $15, grows in 60s, sells for $20",
+      "8B4513"
+    );
+    world.chatManager.sendPlayerMessage(
+      player,
+      "  • Cookie Seed: $50, grows in 75s, sells for $60",
+      "8B4513"
+    );
+  });
+
   /**
    * Play some peaceful ambient music to
    * set the mood!
@@ -1687,4 +1906,72 @@ startServer((world) => {
     loop: true,
     volume: 0.1,
   }).play(world);
+
+  // Add command to abandon current garden
+  world.chatManager.registerCommand("/abandon-garden", (player) => {
+    const playerGardenList = playerGardens.get(player.id) || [];
+
+    if (playerGardenList.length === 0) {
+      world.chatManager.sendPlayerMessage(
+        player,
+        "You don't own any gardens to abandon.",
+        "FF0000"
+      );
+      return;
+    }
+
+    // Remove all gardens owned by this player
+    playerGardenList.forEach((diamondKey) => {
+      gardenOwnership.delete(diamondKey);
+    });
+
+    // Clear player's garden list
+    playerGardens.set(player.id, []);
+
+    world.chatManager.sendPlayerMessage(
+      player,
+      "Garden abandoned! You can now claim a new garden.",
+      "FFA500"
+    );
+  });
+
+  // Add command to set player display name
+  world.chatManager.registerCommand("/name", (player, args) => {
+    if (!args[0]) {
+      world.chatManager.sendPlayerMessage(
+        player,
+        "Please specify a name. Usage: /name <your name>",
+        "FF0000"
+      );
+      return;
+    }
+
+    const newName = args.join(" ").trim();
+    if (newName.length < 2) {
+      world.chatManager.sendPlayerMessage(
+        player,
+        "Name must be at least 2 characters long.",
+        "FF0000"
+      );
+      return;
+    }
+
+    if (newName.length > 20) {
+      world.chatManager.sendPlayerMessage(
+        player,
+        "Name must be 20 characters or less.",
+        "FF0000"
+      );
+      return;
+    }
+
+    // Update player's name in our tracking system
+    playerNames.set(player.id, newName);
+
+    world.chatManager.sendPlayerMessage(
+      player,
+      `Your display name is now: ${newName}`,
+      "00FF00"
+    );
+  });
 });

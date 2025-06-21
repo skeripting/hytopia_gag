@@ -48,6 +48,16 @@ and also configure additional buttons for mobile compatibility.
     } else if (data.type === "garden_claimed_notification") {
       showGardenClaimedNotification();
     } else if (data.type === "raycast_update") {
+      // Debug logging for garden detection
+      if (data.nearbyDiamond) {
+        console.log("UI: Nearby diamond detected:", {
+          position: data.nearbyDiamond.position,
+          isOwned: data.nearbyDiamond.isOwned,
+          gardenIndex: data.nearbyDiamond.gardenIndex,
+          gardenOwnerDisplay: data.nearbyDiamond.gardenOwnerDisplay,
+        });
+      }
+
       const overlay = document.getElementById("plant-seed-overlay");
       const text = document.getElementById("plant-seed-text");
       const plantProgressOverlay = document.getElementById(
@@ -64,26 +74,22 @@ and also configure additional buttons for mobile compatibility.
 
       // Update canPlant flag based on conditions
       let canPlant = data.lookingAtDirt && data.heldItem?.includes("Seed");
+      let canClaimGarden = data.nearbyDiamond && !data.nearbyDiamond.isOwned;
 
       if (canPlant) {
         text.textContent = `Plant ${data.heldItem}`;
         overlay.classList.add("visible");
+        overlay.classList.add("clickable");
+      } else if (canClaimGarden) {
+        const gardenIndex = data.nearbyDiamond.gardenIndex || 1;
+        text.textContent = `Claim Garden #${gardenIndex}`;
+        overlay.classList.add("visible");
+        overlay.classList.add("claim-garden");
+        overlay.classList.add("clickable");
       } else {
         overlay.classList.remove("visible");
-      }
-
-      // Handle garden claim display
-      if (data.nearbyGarden && !data.nearbyGarden.isOwned) {
-        if (overlay && text) {
-          const gardenIndex = data.nearbyGarden.gardenIndex || 1;
-          text.textContent = `Claim Garden #${gardenIndex}`;
-          overlay.classList.add("visible");
-          overlay.classList.add("claim-garden");
-        }
-      } else {
-        if (overlay) {
-          overlay.classList.remove("claim-garden");
-        }
+        overlay.classList.remove("clickable");
+        overlay.classList.remove("claim-garden");
       }
 
       // Handle plant progress display
