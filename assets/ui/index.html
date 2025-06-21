@@ -107,7 +107,9 @@ and also configure additional buttons for mobile compatibility.
           "UI: Showing plant progress for:",
           data.nearbyPlant.name,
           "Progress:",
-          data.plantProgress
+          data.plantProgress,
+          "Can harvest:",
+          data.canHarvestPlant
         );
 
         if (
@@ -124,9 +126,17 @@ and also configure additional buttons for mobile compatibility.
 
           // Change color based on growth stage
           if (data.isPlantFullyGrown) {
-            plantProgressFill.style.backgroundColor = "#4CAF50"; // Green for fully grown
-            plantProgressText.textContent = `${plantName} - Ready to harvest! (Press E)`;
-            plantProgressOverlay.classList.add("harvest-ready");
+            if (data.canHarvestPlant) {
+              // Player can harvest this plant
+              plantProgressFill.style.backgroundColor = "#4CAF50"; // Green for fully grown
+              plantProgressText.textContent = `${plantName} - Ready to harvest! (Press E)`;
+              plantProgressOverlay.classList.add("harvest-ready");
+            } else {
+              // Plant is fully grown but player can't harvest it (not their garden)
+              plantProgressFill.style.backgroundColor = "#4CAF50"; // Green for fully grown
+              plantProgressText.textContent = `${plantName} - Fully grown (not your garden)`;
+              plantProgressOverlay.classList.remove("harvest-ready");
+            }
           } else if (progress > 50) {
             plantProgressFill.style.backgroundColor = "#FF9800"; // Orange for growing
             plantProgressOverlay.classList.remove("harvest-ready");

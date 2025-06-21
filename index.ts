@@ -72,6 +72,7 @@ type RaycastData = {
   } | null;
   plantProgress: number;
   isPlantFullyGrown: boolean;
+  canHarvestPlant: boolean;
   nearbyDiamond: {
     position: { x: number; y: number; z: number };
     isOwned: boolean;
@@ -125,7 +126,7 @@ const PLANT_TYPES: PlantTypes = {
     plantModel: "models/items/carrot.gltf",
     seedScale: 0.3,
     plantScale: 1.2,
-    growthTime: 4000, // 4 seconds
+    growthTime: 8000, // 8 seconds
     finalHeight: 1.2, // Increased from 0.5 to 1.2 for better visibility
     color: "FFA500", // Orange
     emoji: "🥕",
@@ -138,12 +139,12 @@ const PLANT_TYPES: PlantTypes = {
     plantModel: "models/items/melon.gltf",
     seedScale: 0.3,
     plantScale: 1.5,
-    growthTime: 30000, // 30 seconds
+    growthTime: 60000, // 1 minute
     finalHeight: 0.8, // Increased from 0.3 to 0.8 for better visibility
     color: "00FF00", // Green
     emoji: "🍈",
     cost: 25, // 25 cash
-    sellPrice: 30, // 30 cash
+    sellPrice: 60, // 60 cash
   },
   "potato-seed": {
     name: "Potato Seed",
@@ -151,12 +152,25 @@ const PLANT_TYPES: PlantTypes = {
     plantModel: "models/items/potato.gltf", // Using bone as placeholder
     seedScale: 0.3,
     plantScale: 0.8,
-    growthTime: 60000, // 60 seconds
+    growthTime: 360000, // 6 mins
     finalHeight: 1.0, // Increased from 0.6 to 1.0 for better visibility
     color: "8B4513", // Brown
     emoji: "🥔",
-    cost: 15, // 15 cash
-    sellPrice: 20, // 20 cash
+    cost: 75, // 75 cash
+    sellPrice: 250, // 250 cash
+  },
+  "mushroom-seed": {
+    name: "Mushroom Seed",
+    seedModel: "models/items/stick.gltf",
+    plantModel: "models/items/stew-mushroom.gltf", // Using map as placeholder
+    seedScale: 0.3,
+    plantScale: 2.0,
+    growthTime: 1000 * 10, // 10 minutes
+    finalHeight: 1.5,
+    color: "8B4513", // Gold
+    emoji: "🍄",
+    cost: 1000, // 1000 cash
+    sellPrice: 1750, // 1750 cash
   },
   "cookie-seed": {
     name: "Cookie Seed",
@@ -164,12 +178,12 @@ const PLANT_TYPES: PlantTypes = {
     plantModel: "models/items/cookie.gltf", // Using map as placeholder
     seedScale: 0.3,
     plantScale: 2.0,
-    growthTime: 75000, // 75 seconds
+    growthTime: 1000 * 25, // 25 minutes
     finalHeight: 1.5,
     color: "8B4513", // Gold
     emoji: "🍪",
-    cost: 50, // 50 cash
-    sellPrice: 60, // 60 cash
+    cost: 1000, // 1000 cash
+    sellPrice: 1750, // 1750 cash
   },
 } as const;
 
@@ -398,6 +412,7 @@ startServer((world) => {
       let nearbyPlant: RaycastData["nearbyPlant"] = null;
       let plantProgress = 0;
       let isPlantFullyGrown = false;
+      let canHarvestPlant = false; // Add this flag to track if player can harvest
 
       // Check for dirt blocks
       for (let x = -checkRadius; x <= checkRadius; x++) {
@@ -486,6 +501,14 @@ startServer((world) => {
             );
             const fullyGrown = progress >= 100;
 
+            // Check if this plant is in the player's garden
+            const plantGardenOwner = getDiamondOwnerForPosition(
+              seed.plantPos.x,
+              seed.plantPos.y,
+              seed.plantPos.z
+            );
+            const canHarvest = plantGardenOwner === player.id;
+
             // Only update if this is the closest plant
             if (
               !nearbyPlant ||
@@ -502,6 +525,7 @@ startServer((world) => {
               };
               plantProgress = progress;
               isPlantFullyGrown = fullyGrown;
+              canHarvestPlant = canHarvest && fullyGrown; // Only allow harvesting if fully grown and in player's garden
             }
           }
         }
@@ -535,6 +559,14 @@ startServer((world) => {
             );
 
             if (plantInfo) {
+              // Check if this plant is in the player's garden
+              const plantGardenOwner = getDiamondOwnerForPosition(
+                entityPos.x,
+                entityPos.y,
+                entityPos.z
+              );
+              const canHarvest = plantGardenOwner === player.id;
+
               // Only update if this is the closest plant and we don't already have a growing seed nearby
               if (
                 !nearbyPlant ||
@@ -546,6 +578,7 @@ startServer((world) => {
                 };
                 plantProgress = 100; // Fully grown
                 isPlantFullyGrown = true;
+                canHarvestPlant = canHarvest; // Allow harvesting if in player's garden
               }
             }
           }
@@ -575,6 +608,7 @@ startServer((world) => {
         nearbyPlant,
         plantProgress,
         isPlantFullyGrown,
+        canHarvestPlant,
         nearbyDiamond: nearbyDiamond
           ? { ...nearbyDiamond, gardenOwnerDisplay }
           : null,
@@ -1028,6 +1062,16 @@ startServer((world) => {
       } else if (data.type === "harvest_plant") {
         const raycastData = playerRaycastData.get(player.id);
         if (!raycastData?.nearbyPlant) {
+          return;
+        }
+
+        // Check if player can harvest this plant
+        if (!raycastData.canHarvestPlant) {
+          world.chatManager.sendPlayerMessage(
+            player,
+            "You can only harvest plants in your own garden!",
+            "FF0000"
+          );
           return;
         }
 
