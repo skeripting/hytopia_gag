@@ -1,0 +1,10 @@
+{
+  "gardenOwnership": {
+    "-55,1,-1": "player-1"
+  },
+  "gardenIndices": {
+    "-55,1,-1": 1
+  },
+  "nextGardenIndex": 2,
+  "lastSavedAt": 1750507430619
+}
