@@ -60,6 +60,9 @@ let nextGardenIndex = 1; // Next available garden index
 // Add tracking for fully grown plants to prevent duplicate harvesting
 const fullyGrownPlants = new Map<string, Entity>(); // plantPosition -> plantEntity
 
+// Add a set to track recently harvested plant positions
+const recentlyHarvestedPlants = new Set<string>();
+
 // Add username tracking for garden ownership display
 const playerUsernames = new Map<string, string>(); // playerId -> username
 
@@ -493,6 +496,23 @@ const loadGrowingPlantsData = async (player: any, world: any) => {
               )} grew while you were away! ${plantInfo.emoji}`,
               plantInfo.color
             );
+          } else if (offlineGrowthTime > 0) {
+            // Plant grew partially while offline
+            const percentGrown = Math.floor(
+              (offlineGrowthTime / plantInfo.growthTime) * 100
+            );
+            if (percentGrown > 0) {
+              world.chatManager.sendPlayerMessage(
+                player,
+                `🌱 Your ${plantInfo.name.replace(
+                  " Seed",
+                  ""
+                )} grew ${percentGrown}% while you were away! ${
+                  plantInfo.emoji
+                }`,
+                plantInfo.color
+              );
+            }
           }
         }
       });
@@ -619,17 +639,18 @@ const updatePlayerInventoryUI = (
   heldItemIndex: number | null = null
 ) => {
   const inventory = playerInventories.get(player.id) || [];
-  // Pad inventory to 9 slots
+  // Send the full inventory for the modal, but still show the first 9 for the hotbar
   const paddedInventory = [
-    ...inventory,
-    ...Array(9 - inventory.length).fill(null),
+    ...inventory.slice(0, 9),
+    ...Array(9 - Math.min(inventory.length, 9)).fill(null),
   ];
 
-  // Send inventory data through chat system with held item info
+  // Send both hotbar and full inventory
   player.ui.sendData({
     type: "inventory_update",
-    inventory: paddedInventory,
+    inventory: inventory, // full inventory for modal
     heldItemIndex: heldItemIndex,
+    hotbar: paddedInventory, // for hotbar UI if needed in the future
   });
 };
 
@@ -1017,6 +1038,10 @@ startServer(async (world) => {
         const dy = entityPos.y - playerPos.y;
         const dz = entityPos.z - playerPos.z;
         const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        // Skip if this plant was just harvested
+        const plantKey = `${entityPos.x},${entityPos.y},${entityPos.z}`;
+        if (recentlyHarvestedPlants.has(plantKey)) return;
 
         if (distance <= 3) {
           // Check if this entity is a fully grown plant by looking at its model
@@ -1572,6 +1597,15 @@ startServer(async (world) => {
           return;
         }
 
+        // Debounce: Prevent double-harvest
+        const plantKey = `${raycastData.nearbyPlant.position.x},${raycastData.nearbyPlant.position.y},${raycastData.nearbyPlant.position.z}`;
+        if (recentlyHarvestedPlants.has(plantKey)) {
+          // Optionally, send a message or just silently ignore
+          return;
+        }
+        recentlyHarvestedPlants.add(plantKey);
+        recentlyHarvestedPlants.delete(plantKey);
+
         // Check if player can harvest this plant
         if (!raycastData.canHarvestPlant) {
           world.chatManager.sendPlayerMessage(
@@ -1617,7 +1651,6 @@ startServer(async (world) => {
             return;
           }
 
-          // Remove the growing seed
           seed.entity.despawn();
           growingSeeds.delete(seedId);
 
@@ -1634,31 +1667,17 @@ startServer(async (world) => {
           savePlayerData(player);
           saveGrowingPlantsData(player);
 
+          // Mark this plant as recently harvested
+          const plantKey = `${seed.plantPos.x},${seed.plantPos.y},${seed.plantPos.z}`;
+          recentlyHarvestedPlants.add(plantKey);
+          setTimeout(() => recentlyHarvestedPlants.delete(plantKey), 1000);
+
           // Notify player with a more exciting message
           world.chatManager.sendPlayerMessage(
             player,
             `✨ Harvested a ${harvestedItem}! ${plantInfo.emoji}`,
             plantInfo.color
           );
-
-          // Add a small animation effect
-          const harvestEffect = new Entity({
-            modelUri: plantInfo.plantModel,
-            modelScale: plantInfo.plantScale * 0.5,
-            rigidBodyOptions: {
-              enabled: false,
-            },
-          });
-
-          harvestEffect.spawn(world, {
-            ...seed.plantPos,
-            y: seed.plantPos.y + 0.5,
-          });
-
-          // Make the harvested item float up and fade out
-          setTimeout(() => {
-            harvestEffect.despawn();
-          }, 1000);
         } else {
           // Handle fully grown plant entity harvest
           // First check if this plant is already being harvested (in fullyGrownPlants map)
@@ -1676,6 +1695,10 @@ startServer(async (world) => {
               // Remove the plant entity and untrack it
               trackedPlant.despawn();
               fullyGrownPlants.delete(plantKey);
+
+              // Mark this plant as recently harvested
+              recentlyHarvestedPlants.add(plantKey);
+              setTimeout(() => recentlyHarvestedPlants.delete(plantKey), 1000);
 
               // Add harvested item to inventory
               const inventory = playerInventories.get(player.id) || [];
@@ -1697,23 +1720,6 @@ startServer(async (world) => {
               );
 
               // Add a small animation effect
-              const harvestEffect = new Entity({
-                modelUri: plantInfo.plantModel,
-                modelScale: plantInfo.plantScale * 0.5,
-                rigidBodyOptions: {
-                  enabled: false,
-                },
-              });
-
-              harvestEffect.spawn(world, {
-                ...raycastData.nearbyPlant.position,
-                y: raycastData.nearbyPlant.position.y + 0.5,
-              });
-
-              // Make the harvested item float up and fade out
-              setTimeout(() => {
-                harvestEffect.despawn();
-              }, 1000);
             } else {
               world.chatManager.sendPlayerMessage(
                 player,
@@ -1743,6 +1749,14 @@ startServer(async (world) => {
               if (plantInfo) {
                 // Remove the plant entity
                 plantEntity.despawn();
+
+                // Mark this plant as recently harvested
+                const plantKey = `${raycastData.nearbyPlant.position.x},${raycastData.nearbyPlant.position.y},${raycastData.nearbyPlant.position.z}`;
+                recentlyHarvestedPlants.add(plantKey);
+                setTimeout(
+                  () => recentlyHarvestedPlants.delete(plantKey),
+                  1000
+                );
 
                 // Add harvested item to inventory
                 const inventory = playerInventories.get(player.id) || [];
@@ -1805,16 +1819,16 @@ startServer(async (world) => {
       if (!args[0]) {
         world.chatManager.sendPlayerMessage(
           player,
-          "Please specify an item index (0-8)"
+          "Please specify an item index (0 for first item, etc)"
         );
         return;
       }
 
       const index = parseInt(args[0]);
-      if (isNaN(index) || index < 0 || index > 8) {
+      if (isNaN(index) || index < 0) {
         world.chatManager.sendPlayerMessage(
           player,
-          "Please enter a valid index (0-8)"
+          "Please enter a valid index (0 or higher)"
         );
         return;
       }
@@ -1864,7 +1878,6 @@ startServer(async (world) => {
           const itemEntity = new Entity({
             modelUri: plantInfo.plantModel,
             modelScale: plantInfo.plantScale * 0.75,
-            // Note: Opacity will be handled in the UI layer
             rigidBodyOptions: {
               enabled: false,
             },
@@ -1872,43 +1885,26 @@ startServer(async (world) => {
 
           // Get player's position and rotation
           const playerPos = playerEntity.position;
-          const playerRot = playerEntity.rotation;
-
-          // Calculate hand position
           const handOffset = {
             x: 0,
             y: -0.5,
             z: -0.5,
           };
-
           const spawnPos = {
             x: playerPos.x + handOffset.x,
             y: playerPos.y + handOffset.y,
             z: playerPos.z + handOffset.z,
           };
-
           itemEntity.spawn(world, spawnPos);
-
-          // Store the item entity and update held item name
           playerHeldItems.set(player.id, itemEntity);
           playerHeldItemNames.set(player.id, selectedItem);
-
-          // Set as child of player immediately
           itemEntity.setParent(playerEntity);
-
-          // Set position relative to parent
           itemEntity.setPosition(handOffset);
-
-          // Update inventory UI to show held item
           updatePlayerInventoryUI(player, world, index);
-
-          // Notify player
           world.chatManager.sendPlayerMessage(
             player,
             `Holding ${selectedItem}`
           );
-
-          // Add event listener for when item is despawned
           itemEntity.on(EntityEvent.DESPAWN, () => {
             const currentHeld = playerHeldItems.get(player.id);
             if (currentHeld === itemEntity) {

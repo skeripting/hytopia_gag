@@ -168,29 +168,77 @@ and also configure additional buttons for mobile compatibility.
     }
   });*/
 
+  // --- FULL INVENTORY MODAL LOGIC ---
+  let fullInventoryOpen = false;
+
+  function openFullInventory() {
+    document.getElementById("full-inventory-modal").classList.add("visible");
+    fullInventoryOpen = true;
+  }
+  function closeFullInventory() {
+    document.getElementById("full-inventory-modal").classList.remove("visible");
+    fullInventoryOpen = false;
+  }
+
+  // Listen for ` key and Escape
+  // (backtick is keyCode 192, but use e.key for better support)
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "`") {
+      if (fullInventoryOpen) {
+        closeFullInventory();
+      } else {
+        openFullInventory();
+        renderFullInventoryUI(
+          window._lastInventory || [],
+          window._lastHeldIndex
+        );
+      }
+      e.preventDefault();
+    } else if (e.key === "Escape" && fullInventoryOpen) {
+      closeFullInventory();
+      e.preventDefault();
+    }
+  });
+
+  // Render the full inventory modal
+  function renderFullInventoryUI(inventory, heldItemIndex) {
+    const container = document.getElementById("full-inventory-list");
+    container.innerHTML = "";
+    inventory.forEach((item, idx) => {
+      const div = document.createElement("div");
+      div.className =
+        "full-inventory-item" + (idx === heldItemIndex ? " selected" : "");
+      div.textContent = item || "(empty)";
+      div.title = item || "";
+      div.onclick = () => {
+        if (item) hytopia.sendData({ type: "hold", index: idx });
+        closeFullInventory();
+      };
+      container.appendChild(div);
+    });
+  }
+
+  // Patch inventory update to also update modal
   function updateInventoryUI(inventory, heldItemIndex) {
+    window._lastInventory = inventory;
+    window._lastHeldIndex = heldItemIndex;
     document.querySelectorAll(".inventory-slot").forEach((slot, index) => {
       const item = inventory[index];
       const isHeld = index === heldItemIndex;
-
-      // Reset all slots first
       slot.classList.remove("selected", "empty", "has-item");
-
       if (item) {
-        // If there's an item, show its name
         slot.textContent = item;
         slot.classList.add("has-item");
-
-        if (isHeld) {
-          // If this is the held item, add selected class
-          slot.classList.add("selected");
-        }
+        if (isHeld) slot.classList.add("selected");
       } else {
-        // If no item, show the slot number
         slot.textContent = (index + 1).toString();
         slot.classList.add("empty");
       }
     });
+    // Also update modal if open
+    if (fullInventoryOpen) {
+      renderFullInventoryUI(inventory, heldItemIndex);
+    }
   }
 
   function updateCashUI(cash) {
@@ -417,6 +465,16 @@ and also configure additional buttons for mobile compatibility.
   >
     Garden Claimed!
   </div>
+</div>
+
+<!-- Add after the main inventory-container -->
+<div id="full-inventory-modal" class="full-inventory-modal">
+  <div class="full-inventory-header">
+    <span>Full Inventory</span>
+    <button id="close-full-inventory" onclick="closeFullInventory()">×</button>
+  </div>
+  <div id="full-inventory-list" class="full-inventory-list"></div>
+  <div class="full-inventory-footer">Press ` or Escape to close</div>
 </div>
 
 <style>
@@ -762,5 +820,80 @@ and also configure additional buttons for mobile compatibility.
       opacity: 0;
       transform: translateX(-50%) translateY(-20px);
     }
+  }
+
+  .full-inventory-modal {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(20, 20, 20, 0.98);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    z-index: 3000;
+    min-width: 340px;
+    min-height: 400px;
+    max-width: 90vw;
+    max-height: 80vh;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+  }
+  .full-inventory-modal.visible {
+    display: flex;
+  }
+  .full-inventory-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #222;
+    color: #fff;
+    font-size: 1.2em;
+    font-family: "Inter", sans-serif;
+    padding: 16px 20px 8px 20px;
+    border-bottom: 1px solid #333;
+  }
+  #close-full-inventory {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.5em;
+    cursor: pointer;
+  }
+  .full-inventory-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .full-inventory-item {
+    background: rgba(255, 255, 255, 0.07);
+    color: #fff;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: "Inter", sans-serif;
+    font-size: 1em;
+    cursor: pointer;
+    transition: background 0.15s;
+    border: 1px solid transparent;
+  }
+  .full-inventory-item.selected {
+    background: #4caf50;
+    color: #fff;
+    border: 1.5px solid #fff;
+  }
+  .full-inventory-item:hover {
+    background: #333;
+  }
+  .full-inventory-footer {
+    background: #222;
+    color: #aaa;
+    font-size: 0.95em;
+    text-align: center;
+    padding: 8px 0 12px 0;
+    border-top: 1px solid #333;
   }
 </style>
